@@ -4,7 +4,7 @@ import shutil
 import asyncio
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
 
@@ -18,6 +18,11 @@ from .xtreme_codes import (
     generate_short_epg, format_xtreme_m3u, _credential_manager
 )
 
+# Application constants
+DEFAULT_CRON_SCHEDULE = "0 3 * * *"
+DEFAULT_PORT = 7004
+MAX_CHANNELS_TO_LOG = 100
+
 # Configuration constants
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 PORT = int(os.environ.get("PORT", DEFAULT_PORT))
@@ -29,11 +34,6 @@ CLI_BIN: Path = Path(os.environ.get("CLI_BIN", "/usr/local/bin/toonamiaftermath-
 MAX_STREAM_CODE_LENGTH = 50
 VALID_STREAM_CODE_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
 ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "").split(",") if os.environ.get("ALLOWED_ORIGINS") else []
-
-# Application constants
-DEFAULT_CRON_SCHEDULE = "0 3 * * *"
-DEFAULT_PORT = 7004
-MAX_CHANNELS_TO_LOG = 100
 
 # MIME type constants
 MIME_M3U = "application/x-mpegURL"
@@ -184,6 +184,17 @@ def ensure_cli_exists() -> None:
 
 
 async def generate_files() -> Dict[str, Any]:
+    """
+    Generate M3U and XMLTV files using the toonamiaftermath-cli.
+    
+    Returns:
+        Dict containing generation status and metadata
+        
+    Raises:
+        FileNotFoundError: If CLI binary is not found
+        PermissionError: If CLI binary is not executable
+        RuntimeError: If file generation fails after all attempts
+    """
     ensure_cli_exists()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Generating M3U and XMLTV via toonamiaftermath-cli (%s)", CLI_BIN)
@@ -198,38 +209,24 @@ async def generate_files() -> Dict[str, Any]:
     ]
 
     success = False
-    for cmd, cwd in attempts:
+    for attempt_num, (cmd, cwd) in enumerate(attempts, 1):
+        logger.info(f"Attempt {attempt_num}/{len(attempts)}: {' '.join(cmd)}")
+        
         try:
-            await run_cmd(cmd, cwd=cwd)
+            return_code = await run_cmd(cmd, cwd=cwd)
+            if return_code != 0:
+                logger.warning(f"CLI returned non-zero exit code: {return_code}")
+                continue
+                
         except Exception as e:
             logger.warning("CLI execution failed for '%s': %s", " ".join(cmd), e)
             if "No such file or directory" in str(e):
                 logger.warning("Binary may be missing required libs on Alpine. Ensure libc6-compat, gcompat, and libstdc++ are installed in the image.")
             continue
 
-        # If explicit paths were provided, check them directly
-        if M3U_PATH.exists() and XML_PATH.exists():
-            success = True
-            break
-
-        # Otherwise, check common defaults in DATA_DIR (and legacy /app)
-        default_m3u_candidates = [DATA_DIR / "index.m3u", Path("/app/index.m3u")] 
-        default_xml_candidates = [DATA_DIR / "index.xml", Path("/app/index.xml")] 
-        for dm in default_m3u_candidates:
-            if dm.exists() and dm != M3U_PATH:
-                try:
-                    shutil.move(str(dm), str(M3U_PATH))
-                except Exception:
-                    shutil.copyfile(str(dm), str(M3U_PATH))
-        for dx in default_xml_candidates:
-            if dx.exists() and dx != XML_PATH:
-                try:
-                    shutil.move(str(dx), str(XML_PATH))
-                except Exception:
-                    shutil.copyfile(str(dx), str(XML_PATH))
-
-        if M3U_PATH.exists() and XML_PATH.exists():
-            success = True
+        # Check if files were generated successfully
+        success = _verify_generated_files()
+        if success:
             break
 
     if not success:
@@ -242,19 +239,79 @@ async def generate_files() -> Dict[str, Any]:
         "cli_version": await get_cli_version(),
     })
     write_state(state)
+    logger.info("Files generated successfully")
     return state
 
 
+def _verify_generated_files() -> bool:
+    """
+    Verify that M3U and XML files were generated successfully.
+    
+    Returns:
+        bool: True if both files exist and are valid
+    """
+    # If explicit paths were provided, check them directly
+    if M3U_PATH.exists() and XML_PATH.exists():
+        return True
+
+    # Otherwise, check common defaults in DATA_DIR (and legacy /app)
+    default_m3u_candidates = [DATA_DIR / "index.m3u", Path("/app/index.m3u")] 
+    default_xml_candidates = [DATA_DIR / "index.xml", Path("/app/index.xml")] 
+    
+    for dm in default_m3u_candidates:
+        if dm.exists() and dm != M3U_PATH:
+            try:
+                shutil.move(str(dm), str(M3U_PATH))
+                logger.info(f"Moved M3U file from {dm} to {M3U_PATH}")
+            except Exception as e:
+                logger.warning(f"Failed to move M3U file: {e}")
+                try:
+                    shutil.copyfile(str(dm), str(M3U_PATH))
+                    logger.info(f"Copied M3U file from {dm} to {M3U_PATH}")
+                except Exception as copy_e:
+                    logger.error(f"Failed to copy M3U file: {copy_e}")
+                    
+    for dx in default_xml_candidates:
+        if dx.exists() and dx != XML_PATH:
+            try:
+                shutil.move(str(dx), str(XML_PATH))
+                logger.info(f"Moved XML file from {dx} to {XML_PATH}")
+            except Exception as e:
+                logger.warning(f"Failed to move XML file: {e}")
+                try:
+                    shutil.copyfile(str(dx), str(XML_PATH))
+                    logger.info(f"Copied XML file from {dx} to {XML_PATH}")
+                except Exception as copy_e:
+                    logger.error(f"Failed to copy XML file: {copy_e}")
+
+    return M3U_PATH.exists() and XML_PATH.exists()
+
+
 async def get_cli_version() -> Optional[str]:
+    """
+    Get the version of the toonamiaftermath-cli binary.
+    
+    Returns:
+        Optional[str]: Version string if available, None otherwise
+    """
     try:
         cmd = [str(CLI_BIN), "--version"]
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        out, _ = await proc.communicate()
-        return out.decode().strip() or None
-    except Exception:
+        out, err = await proc.communicate()
+        
+        if proc.returncode == 0:
+            version = out.decode().strip()
+            return version if version else None
+        else:
+            logger.warning(f"CLI version check failed with code {proc.returncode}: {err.decode()}")
+            return None
+            
+    except Exception as e:
+        logger.warning(f"Failed to get CLI version: {e}")
         return None
 
 
@@ -590,76 +647,189 @@ async def get_stream_codes(request: Request):
     }
 
 
-# Simple cron scheduler with aiocron-like behavior but without deps
-import re
+# Cron scheduler constants and patterns
 CRON_RE = re.compile(r"^\s*([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s*$")
+DEFAULT_FALLBACK_HOUR = 3
+MAX_SCHEDULE_SEARCH_MINUTES = 24 * 60 + 2
 
-from datetime import timedelta
+def parse_cron_field(val: str, default_value: int) -> Tuple[str, Optional[int]]:
+    """
+    Parse a single cron field (minute, hour, etc.).
+    
+    Args:
+        val: Cron field value (e.g., "*", "5", "*/15")
+        default_value: Default value to use for calculations
+        
+    Returns:
+        Tuple of (field_type, value) where field_type is "any", "fixed", "step", or "invalid"
+    """
+    if val == "*":
+        return "any", None
+    if val.startswith("*/") and val[2:].isdigit():
+        return "step", int(val[2:])
+    if val.isdigit():
+        return "fixed", int(val)
+    return "invalid", None
+
+def get_fallback_next_run(dt: datetime) -> datetime:
+    """
+    Get fallback next run time (3 AM next day if past 3 AM, today if before).
+    
+    Args:
+        dt: Current datetime
+        
+    Returns:
+        Next fallback run time
+    """
+    base = dt.replace(hour=DEFAULT_FALLBACK_HOUR, minute=0, second=0, microsecond=0)
+    return base if base > dt else base + timedelta(days=1)
+
+def validate_cron_expression(expr: str) -> Optional[Tuple[str, str, str, str, str]]:
+    """
+    Validate and parse cron expression.
+    
+    Args:
+        expr: Cron expression string
+        
+    Returns:
+        Tuple of (mins, hrs, dom, mon, dow) if valid, None otherwise
+    """
+    match = CRON_RE.match(expr)
+    if not match:
+        logger.warning(f"Invalid cron expression format: {expr}")
+        return None
+    return match.groups()
+
+def check_time_matches_cron(candidate: datetime, min_mode: str, min_val: Optional[int], 
+                          hr_mode: str, hr_val: Optional[int]) -> bool:
+    """
+    Check if a given time matches the cron schedule.
+    
+    Args:
+        candidate: Datetime to check
+        min_mode: Minute field type ("any", "fixed", "step")
+        min_val: Minute value (if applicable)
+        hr_mode: Hour field type ("any", "fixed", "step")
+        hr_val: Hour value (if applicable)
+        
+    Returns:
+        bool: True if time matches schedule
+    """
+    h = candidate.hour
+    mnt = candidate.minute
+    
+    ok_min = (
+        (min_mode == "any") or
+        (min_mode == "fixed" and mnt == (min_val or 0)) or
+        (min_mode == "step" and min_val and (mnt % min_val == 0))
+    )
+    
+    ok_hr = (
+        (hr_mode == "any") or
+        (hr_mode == "fixed" and h == (hr_val or 0)) or
+        (hr_mode == "step" and hr_val and (h % hr_val == 0))
+    )
+    
+    return ok_min and ok_hr
 
 def cron_next(dt: datetime, expr: str) -> Optional[datetime]:
-    # Minimal: support "m h dom mon dow" with *, number, and step (*/N) for minute/hour.
-    m = CRON_RE.match(expr)
-    if not m:
-        base = dt.replace(hour=3, minute=0, second=0, microsecond=0)
-        return base if base > dt else base + timedelta(days=1)
-    mins, hrs, dom, mon, dow = m.groups()
-    def parse_field(val: str, _default: int) -> Tuple[str, Optional[int]]:
-        if val == "*":
-            return "any", None
-        if val.startswith("*/") and val[2:].isdigit():
-            return "step", int(val[2:])
-        if val.isdigit():
-            return "fixed", int(val)
-        return "invalid", None
-
-    min_mode, min_val = parse_field(mins, 0)
-    hr_mode, hr_val = parse_field(hrs, 3)
-    if "invalid" in (min_mode, hr_mode) or any(x not in ("*",) and not x.isdigit() for x in (dom, mon, dow)):
-        base = dt.replace(hour=3, minute=0, second=0, microsecond=0)
-        return base if base > dt else base + timedelta(days=1)
-    # Compute next
+    """
+    Calculate next run time based on cron expression.
+    
+    Args:
+        dt: Current datetime
+        expr: Cron expression (minute hour dom month dow)
+        
+    Returns:
+        Next scheduled run time, or None if invalid
+    """
+    # Parse and validate cron expression
+    cron_parts = validate_cron_expression(expr)
+    if not cron_parts:
+        return get_fallback_next_run(dt)
+    
+    mins, hrs, dom, mon, dow = cron_parts
+    
+    # Parse minute and hour fields (we only support these for now)
+    min_mode, min_val = parse_cron_field(mins, 0)
+    hr_mode, hr_val = parse_cron_field(hrs, DEFAULT_FALLBACK_HOUR)
+    
+    # Check for invalid fields or unsupported complex expressions
+    if "invalid" in (min_mode, hr_mode) or any(
+        x not in ("*",) and not x.isdigit() for x in (dom, mon, dow)
+    ):
+        logger.warning(f"Unsupported cron expression: {expr}, using fallback schedule")
+        return get_fallback_next_run(dt)
+    
+    # Search for next matching time
     candidate = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
-    for _ in range(0, 24*60 + 2):  # search up to ~1 day
-        h = candidate.hour
-        mnt = candidate.minute
-        ok_min = (
-            (min_mode == "any") or
-            (min_mode == "fixed" and mnt == (min_val or 0)) or
-            (min_mode == "step" and min_val and (mnt % min_val == 0))
-        )
-        ok_hr = (
-            (hr_mode == "any") or
-            (hr_mode == "fixed" and h == (hr_val or 0)) or
-            (hr_mode == "step" and hr_val and (h % hr_val == 0))
-        )
-        if ok_min and ok_hr:
+    
+    for _ in range(MAX_SCHEDULE_SEARCH_MINUTES):
+        if check_time_matches_cron(candidate, min_mode, min_val, hr_mode, hr_val):
             return candidate
         candidate += timedelta(minutes=1)
-    # fallback
-    base = dt.replace(hour=3, minute=0, second=0, microsecond=0)
-    return base if base > dt else base + timedelta(days=1)
+    
+    # If no match found in reasonable time, use fallback
+    logger.warning(f"No schedule match found for {expr}, using fallback")
+    return get_fallback_next_run(dt)
 
 
 async def scheduler_loop():
-    # initial run at startup
+    """
+    Main scheduler loop that runs file generation on schedule.
+    
+    Runs initial generation at startup, then runs according to CRON_SCHEDULE.
+    Includes error handling and recovery mechanisms.
+    """
+    # Initial run at startup
+    logger.info("Starting scheduler with initial file generation")
     try:
         await generate_files()
+        logger.info("Initial file generation completed successfully")
     except Exception as e:
         logger.error("Initial generation failed: %s", e)
+    
+    # Main scheduling loop
+    consecutive_failures = 0
+    max_consecutive_failures = 3
+    
     while True:
-        now = datetime.now(timezone.utc)
-        next_run = cron_next(now, os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE))
-        app.state.scheduler_next_run = next_run.isoformat() if next_run else None
-        delay = max(5.0, (next_run - now).total_seconds() if next_run else 3600)
-        logger.info("Next scheduled run at %s (in %.0fs)", next_run, delay)
         try:
+            now = datetime.now(timezone.utc)
+            cron_expression = os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
+            next_run = cron_next(now, cron_expression)
+            
+            if next_run:
+                app.state.scheduler_next_run = next_run.isoformat()
+                delay = max(5.0, (next_run - now).total_seconds())
+                logger.info("Next scheduled run at %s (in %.0fs)", next_run, delay)
+            else:
+                # Fallback if cron calculation fails
+                delay = 3600  # 1 hour fallback
+                app.state.scheduler_next_run = None
+                logger.warning("Could not calculate next run time, using 1-hour fallback")
+            
+            # Wait for scheduled time
             await asyncio.sleep(delay)
+            
+            # Run scheduled generation
             await generate_files()
+            logger.info("Scheduled file generation completed successfully")
+            consecutive_failures = 0  # Reset failure counter on success
+            
         except asyncio.CancelledError:
+            logger.info("Scheduler loop cancelled")
             raise
         except Exception as e:
-            logger.error("Scheduled generation failed: %s", e)
-            await asyncio.sleep(30)
+            consecutive_failures += 1
+            logger.error("Scheduled generation failed (attempt %d/%d): %s", 
+                        consecutive_failures, max_consecutive_failures, e)
+            
+            if consecutive_failures >= max_consecutive_failures:
+                logger.critical("Maximum consecutive failures reached, extending retry delay")
+                await asyncio.sleep(300)  # 5 minute delay after multiple failures
+            else:
+                await asyncio.sleep(30)  # 30 second delay for single failures
 
 
 @app.on_event("startup")

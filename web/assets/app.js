@@ -21,60 +21,158 @@ if (xtremeUrl) xtremeUrl.textContent = origin;
 async function fetchJSON(path){
   try{
     const r = await fetch(path, {cache:'no-store'});
-    if(!r.ok) throw new Error('HTTP '+r.status);
+    if(!r.ok) {
+      console.error(`HTTP ${r.status} fetching ${path}`);
+      throw new Error(`HTTP ${r.status}: ${r.statusText}`);
+    }
     return await r.json();
   }catch(e){
     console.warn('Fetch failed', path, e);
+    showErrorMessage(`Failed to load ${path}`);
     return null;
   }
+}
+
+function showErrorMessage(message) {
+  // Create or update error banner
+  let banner = document.getElementById('error-banner');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'error-banner';
+    banner.style.cssText = `
+      position: fixed; top: 10px; right: 10px; 
+      background: linear-gradient(135deg, #ff6b6b, #ee5a52);
+      color: white; padding: 12px 16px; border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1000;
+      max-width: 300px; font-size: 14px; opacity: 0;
+      transition: opacity 0.3s ease;
+    `;
+    document.body.appendChild(banner);
+  }
+  
+  banner.textContent = message;
+  banner.style.opacity = '1';
+  
+  // Auto-hide after 5 seconds
+  setTimeout(() => {
+    if (banner) banner.style.opacity = '0';
+  }, 5000);
+}
+
+function hideErrorMessage() {
+  const banner = document.getElementById('error-banner');
+  if (banner) banner.style.opacity = '0';
 }
 
 function setOnline(isOnline){
   statusDot.classList.toggle('offline', !isOnline);
   statusText.textContent = isOnline ? 'Online' : 'Offline';
+  
+  if (isOnline) {
+    hideErrorMessage();
+  } else {
+    showErrorMessage('Server is offline or unreachable');
+  }
 }
 
 function formatDate(ts){
   if(!ts) return '—';
-  try{ return new Date(ts).toLocaleString(); } catch { return String(ts); }
+  try{ 
+    const date = new Date(ts);
+    return isNaN(date.getTime()) ? String(ts) : date.toLocaleString();
+  } catch { 
+    return String(ts); 
+  }
 }
 
 async function loadStatus(){
-  const data = await fetchJSON('/status');
-  if(!data){ setOnline(false); return; }
-  setOnline(true);
-  lastUpdate.textContent = formatDate(data.last_update);
-  nextRun.textContent = data.next_run ? formatDate(data.next_run) : '—';
-  const streamEndpoints = data.stream_endpoints_available ? '✓ Available' : 'Not available';
-  quickStats.innerHTML = `
-    <div class="meta">
-      <div>Channels: <strong>${data.channel_count ?? '—'}</strong></div>
-      <div>Schedule: <code>${data.cron ?? '—'}</code></div>
-      <div>CLI version: <code>${data.cli_version ?? '—'}</code></div>
-      <div>Stream endpoints: <code>${streamEndpoints}</code></div>
-    </div>`;
+  try {
+    const data = await fetchJSON('/status');
+    if(!data){ 
+      setOnline(false); 
+      return; 
+    }
+    
+    setOnline(true);
+    lastUpdate.textContent = formatDate(data.last_update);
+    nextRun.textContent = data.next_run ? formatDate(data.next_run) : '—';
+    const streamEndpoints = data.stream_endpoints_available ? '✓ Available' : 'Not available';
+    
+    quickStats.innerHTML = `
+      <div class="meta">
+        <div>Channels: <strong>${data.channel_count ?? '—'}</strong></div>
+        <div>Schedule: <code>${data.cron ?? '—'}</code></div>
+        <div>CLI version: <code>${data.cli_version ?? '—'}</code></div>
+        <div>Stream endpoints: <code>${streamEndpoints}</code></div>
+      </div>`;
+  } catch (error) {
+    console.error('Status load failed:', error);
+    setOnline(false);
+  }
 }
 
 async function loadChannels(){
-  const list = await fetchJSON('/channels');
-  if(!list){ channelsEl.innerHTML = '<div class="row"><div class="ch">—</div><div class="name">Unable to load channels</div><div></div></div>'; return; }
-  channelsEl.innerHTML = '';
-  list.forEach((c)=>{
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = `
-      <div class="ch">${c.number ?? '—'}</div>
-      <div class="name" title="${c.name}">${c.name}</div>
-      <div class="badge">${c.id ?? 'ta'}</div>`;
-    channelsEl.appendChild(row);
-  });
+  try {
+    const list = await fetchJSON('/channels');
+    if(!list){ 
+      channelsEl.innerHTML = '<div class="row"><div class="ch">—</div><div class="name">Unable to load channels</div><div></div></div>'; 
+      return; 
+    }
+    
+    channelsEl.innerHTML = '';
+    if (list.length === 0) {
+      channelsEl.innerHTML = '<div class="row"><div class="ch">—</div><div class="name">No channels available</div><div></div></div>';
+      return;
+    }
+    
+    list.forEach((c)=>{
+      const row = document.createElement('div');
+      row.className = 'row';
+      // Escape HTML to prevent XSS
+      const safeName = (c.name || '').replace(/[<>&"]/g, (match) => {
+        const entities = {'<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;'};
+        return entities[match];
+      });
+      row.innerHTML = `
+        <div class="ch">${c.number ?? '—'}</div>
+        <div class="name" title="${safeName}">${safeName}</div>
+        <div class="badge">${c.id ?? 'ta'}</div>`;
+      channelsEl.appendChild(row);
+    });
+    
+    console.log(`Loaded ${list.length} channels`);
+  } catch (error) {
+    console.error('Channel load failed:', error);
+    channelsEl.innerHTML = '<div class="row"><div class="ch">—</div><div class="name">Error loading channels</div><div></div></div>';
+  }
 }
 
-byId('refresh').addEventListener('click', async ()=>{
+// Enhanced refresh with user feedback
+byId('refresh').addEventListener('click', async (event)=>{
+  const btn = event.target;
+  const originalText = btn.textContent;
+  
   try{
+    btn.textContent = '↻ Refreshing...';
+    btn.disabled = true;
+    
     const r = await fetch('/refresh', {method:'POST'});
-    if(r.ok){ await Promise.all([loadStatus(), loadChannels()]); }
-  }catch(e){ console.warn('Refresh failed', e); }
+    if(r.ok){ 
+      await Promise.all([loadStatus(), loadChannels()]);
+      btn.textContent = '✓ Refreshed!';
+      setTimeout(() => {
+        btn.textContent = originalText;
+        btn.disabled = false;
+      }, 2000);
+    } else {
+      throw new Error(`HTTP ${r.status}`);
+    }
+  }catch(e){ 
+    console.warn('Refresh failed', e);
+    showErrorMessage('Refresh failed - please try again');
+    btn.textContent = originalText;
+    btn.disabled = false;
+  }
 });
 
 // Load Xtreme Codes credentials

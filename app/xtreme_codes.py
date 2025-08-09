@@ -3,7 +3,7 @@ import json
 import secrets
 import hashlib
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime, timezone, timedelta
 
 from fastapi import HTTPException, Query, Request
@@ -44,14 +44,28 @@ class CredentialManager:
 _credential_manager = CredentialManager()
 
 def generate_credentials() -> Dict[str, str]:
-    """Generate unique username and password for this installation."""
+    """
+    Generate unique username and password for this installation.
+    
+    Returns:
+        Dict containing username and password
+    """
     # Generate more memorable but still unique credentials
     username = f"toonami_{secrets.token_hex(3)}"  # e.g. toonami_a1b2c3
     password = secrets.token_urlsafe(16)  # Longer, more secure password
     return {"username": username, "password": password}
 
-def hash_password_secure(password: str, salt: bytes = None) -> tuple[str, str]:
-    """Securely hash password with salt."""
+def hash_password_secure(password: str, salt: bytes = None) -> Tuple[str, str]:
+    """
+    Securely hash password with salt using PBKDF2.
+    
+    Args:
+        password: Plain text password to hash
+        salt: Optional salt bytes, generates new if None
+        
+    Returns:
+        Tuple of (password_hash_hex, salt_hex)
+    """
     if salt is None:
         salt = secrets.token_bytes(SALT_LENGTH)
     
@@ -60,11 +74,24 @@ def hash_password_secure(password: str, salt: bytes = None) -> tuple[str, str]:
     return password_hash.hex(), salt.hex()
 
 def hash_password(password: str) -> str:
-    """Simple hash for password storage (backward compatibility)."""
+    """
+    Simple hash for password storage (backward compatibility).
+    
+    Args:
+        password: Plain text password to hash
+        
+    Returns:
+        SHA256 hash of the password
+    """
     return hashlib.sha256(password.encode()).hexdigest()
 
-def load_or_create_credentials() -> Dict[str, str]:
-    """Load existing credentials or create new ones."""
+def load_or_create_credentials() -> Dict[str, Any]:
+    """
+    Load existing credentials or create new ones.
+    
+    Returns:
+        Dict containing credential information (password only for new installations)
+    """
     stored_creds = _credential_manager.get_stored_credentials()
     
     if stored_creds and all(k in stored_creds for k in ["username", "password_hash", "created_at"]):
@@ -105,7 +132,16 @@ def load_or_create_credentials() -> Dict[str, str]:
     return result
 
 def verify_credentials(username: str, password: str) -> bool:
-    """Verify username and password."""
+    """
+    Verify username and password against stored credentials.
+    
+    Args:
+        username: Username to verify
+        password: Password to verify
+        
+    Returns:
+        bool: True if credentials are valid
+    """
     stored_creds = _credential_manager.get_stored_credentials()
     return (
         stored_creds.get("username") == username and 
@@ -113,7 +149,15 @@ def verify_credentials(username: str, password: str) -> bool:
     )
 
 def get_server_info(request: Request) -> Dict[str, Any]:
-    """Generate server info response."""
+    """
+    Generate server info response for Xtreme Codes API.
+    
+    Args:
+        request: FastAPI request object
+        
+    Returns:
+        Dict containing server and user information
+    """
     host = request.headers.get("host", "localhost")
     protocol = "https" if request.url.scheme == "https" else "http"
     
@@ -143,8 +187,20 @@ def get_server_info(request: Request) -> Dict[str, Any]:
         }
     }
 
-async def xtreme_auth_middleware(username: str = Query(None), password: str = Query(None)):
-    """Middleware to verify Xtreme Codes credentials."""
+async def xtreme_auth_middleware(username: str = Query(None), password: str = Query(None)) -> Dict[str, str]:
+    """
+    Middleware to verify Xtreme Codes credentials.
+    
+    Args:
+        username: Username parameter from query
+        password: Password parameter from query
+        
+    Returns:
+        Dict containing verified username and password
+        
+    Raises:
+        HTTPException: If authentication fails
+    """
     if not username or not password:
         raise HTTPException(status_code=401, detail="Authentication required")
     
@@ -153,8 +209,16 @@ async def xtreme_auth_middleware(username: str = Query(None), password: str = Qu
     
     return {"username": username, "password": password}
 
-def generate_short_epg(channels: list) -> str:
-    """Generate simplified EPG data."""
+def generate_short_epg(channels: List[Dict[str, Any]]) -> str:
+    """
+    Generate simplified EPG data for channels.
+    
+    Args:
+        channels: List of channel dictionaries
+        
+    Returns:
+        JSON string containing EPG data
+    """
     epg_data = {
         "epg_listings": []
     }
@@ -173,8 +237,19 @@ def generate_short_epg(channels: list) -> str:
     
     return json.dumps(epg_data)
 
-def format_xtreme_m3u(channels: list, host: str, username: str, password: str) -> str:
-    """Format M3U for Xtreme Codes API format."""
+def format_xtreme_m3u(channels: List[Dict[str, Any]], host: str, username: str, password: str) -> str:
+    """
+    Format M3U for Xtreme Codes API format.
+    
+    Args:
+        channels: List of channel dictionaries
+        host: Server hostname
+        username: Xtreme Codes username
+        password: Xtreme Codes password
+        
+    Returns:
+        M3U formatted string
+    """
     lines = ["#EXTM3U"]
     
     for channel in channels:
