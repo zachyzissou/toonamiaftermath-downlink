@@ -14,7 +14,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apk add --no-cache bash ca-certificates tzdata
 
 WORKDIR /app
-COPY app /app
+# Ensure Python package layout: place code under /app/app so 'app.server' resolves
+COPY app /app/app
 COPY web /web
 COPY requirements.txt /app/requirements.txt
 COPY --from=cli-fetch /ta-cli /usr/local/bin/toonamiaftermath-cli
