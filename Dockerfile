@@ -14,13 +14,15 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 RUN apk add --no-cache bash ca-certificates tzdata
 
 WORKDIR /app
+# Copy only requirements first for better cache hits
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+# Then copy app code and web assets
 # Ensure Python package layout: place code under /app/app so 'app.server' resolves
 COPY app /app/app
 COPY web /web
-COPY requirements.txt /app/requirements.txt
 COPY --from=cli-fetch /ta-cli /usr/local/bin/toonamiaftermath-cli
-
-RUN pip install --no-cache-dir -r /app/requirements.txt
 
 EXPOSE 7004
 VOLUME ["/data"]

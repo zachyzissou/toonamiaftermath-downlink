@@ -4,6 +4,14 @@
 
 A lightweight containerized application that fetches Toonami Aftermath channels using `toonamiaftermath-cli`, generates up-to-date M3U and XMLTV files, and serves them via a Toonami-themed WebUI.
 
+## Screenshots
+
+> The screenshots below are sanitized to avoid any credentials or sensitive info.
+
+![WebUI Home](docs/screenshots/webui-home.png)
+![Xtreme Codes Tab](docs/screenshots/webui-xtreme-codes.png)
+![Status JSON](docs/screenshots/status-json.png)
+
 ## Features
 
 - 🌙 **Dark Toonami Theme** - Sleek futuristic UI with glowing accents
@@ -118,7 +126,7 @@ uvicorn app.server:create_app --reload --host 0.0.0.0 --port 7004
 
 If your Toonami Aftermath streams require authentication codes, use the stream code endpoint:
 
-- Standard M3U: `/m3u` 
+- Standard M3U: `/m3u`
 - With stream codes: `/m3u/stream-codes/YOUR_CODE`
 
 No configuration needed - both endpoints are always available.
