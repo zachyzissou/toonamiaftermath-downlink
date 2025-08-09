@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0b0f14"/>
+      <stop offset="100%" stop-color="#0f1620"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="675" fill="url(#bg)"/>
+  <rect x="80" y="80" width="1040" height="515" rx="12" fill="#0d141c" stroke="#1f2937"/>
+  <text x="104" y="120" font-family="Segoe UI, Roboto, Arial" font-size="20" fill="#d1d5db">/status</text>
+  <g transform="translate(104,150)">
+    <rect width="1000" height="420" rx="8" fill="#0b1220"/>
+    <text x="16" y="32" font-family="Consolas, Menlo, monospace" font-size="16" fill="#a7f3d0">{
+      "last_update": "2025-08-09T03:00:00Z",
+      "next_run": "2025-08-10T03:00:00Z",
+      "cron": "0 3 * * *",
+      "cli_version": "toonamiaftermath-cli v1.1.1",
+      "channel_count": 5,
+      "stream_endpoints_available": true
+    }</text>
+  </g>
+</svg>

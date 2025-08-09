@@ -8,9 +8,9 @@ A lightweight containerized application that fetches Toonami Aftermath channels 
 
 > The screenshots below are sanitized to avoid any credentials or sensitive info.
 
-![WebUI Home](docs/screenshots/webui-home.png)
-![Xtreme Codes Tab](docs/screenshots/webui-xtreme-codes.png)
-![Status JSON](docs/screenshots/status-json.png)
+![WebUI Home](docs/screenshots/webui-home.svg)
+![Xtreme Codes Tab](docs/screenshots/webui-xtreme-codes.svg)
+![Status JSON](docs/screenshots/status-json.svg)
 
 ## Features
 
