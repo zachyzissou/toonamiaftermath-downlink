@@ -10,7 +10,9 @@ from typing import Optional, List, Dict, Any, Tuple
 
 from fastapi import FastAPI, Response, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, RedirectResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import (
+    FileResponse, RedirectResponse, JSONResponse, PlainTextResponse
+)
 from fastapi.middleware.cors import CORSMiddleware
 
 from .xtreme_codes import (
@@ -33,7 +35,11 @@ CLI_BIN: Path = Path(os.environ.get("CLI_BIN", "/usr/local/bin/toonamiaftermath-
 # Security constants
 MAX_STREAM_CODE_LENGTH = 50
 VALID_STREAM_CODE_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
-ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "").split(",") if os.environ.get("ALLOWED_ORIGINS") else []
+ALLOWED_ORIGINS = (
+    os.environ.get("ALLOWED_ORIGINS", "").split(",") 
+    if os.environ.get("ALLOWED_ORIGINS") 
+    else []
+)
 
 # MIME type constants
 MIME_M3U = "application/x-mpegURL"
@@ -98,11 +104,13 @@ WEB_DIR = Path(os.environ.get("WEB_DIR", "/web")).resolve()
 
 # Only mount static files if the directory exists
 def setup_web_routes():
+    """Setup web UI routes and static file serving."""
     if (WEB_DIR / "assets").exists():
         app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
     
     @app.get("/")
     def web_index():
+        """Serve the main web UI or API info."""
         if (WEB_DIR / "index.html").exists():
             return FileResponse(str(WEB_DIR / "index.html"))
         else:
@@ -175,10 +183,15 @@ async def run_cmd(cmd: List[str], cwd: Optional[str] = None) -> int:
 def ensure_cli_exists() -> None:
     """Ensure CLI binary exists and is executable, with helpful diagnostics."""
     if not CLI_BIN.exists():
-        raise FileNotFoundError(f"toonamiaftermath-cli not found at {CLI_BIN}. Set CLI_BIN env to override.")
+        raise FileNotFoundError(
+            f"toonamiaftermath-cli not found at {CLI_BIN}. Set CLI_BIN env to override."
+        )
     
     if not os.access(str(CLI_BIN), os.X_OK):
-        raise PermissionError(f"toonamiaftermath-cli at {CLI_BIN} is not executable. chmod +x it or rebuild image.")
+        raise PermissionError(
+            f"toonamiaftermath-cli at {CLI_BIN} is not executable. "
+            f"chmod +x it or rebuild image."
+        )
     
     logger.info(f"CLI binary found and executable: {CLI_BIN}")
 
@@ -198,7 +211,10 @@ async def generate_files() -> Dict[str, Any]:
     ensure_cli_exists()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Generating M3U and XMLTV via toonamiaftermath-cli (%s)", CLI_BIN)
-    logger.info("DATA_DIR=%s | WEB_DIR=%s | CRON_SCHEDULE=%s", DATA_DIR, WEB_DIR, os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE))
+    logger.info(
+        "DATA_DIR=%s | WEB_DIR=%s | CRON_SCHEDULE=%s", 
+        DATA_DIR, WEB_DIR, os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
+    )
 
     # Try multiple invocation strategies to support different CLI versions
     attempts: List[Tuple[List[str], Optional[str]]] = [
@@ -221,7 +237,10 @@ async def generate_files() -> Dict[str, Any]:
         except Exception as e:
             logger.warning("CLI execution failed for '%s': %s", " ".join(cmd), e)
             if "No such file or directory" in str(e):
-                logger.warning("Binary may be missing required libs on Alpine. Ensure libc6-compat, gcompat, and libstdc++ are installed in the image.")
+                logger.warning(
+                    "Binary may be missing required libs on Alpine. "
+                    "Ensure libc6-compat, gcompat, and libstdc++ are installed in the image."
+                )
             continue
 
         # Check if files were generated successfully
@@ -384,7 +403,11 @@ async def status():
     cli_version = state.get("cli_version")
     return {
         "last_update": last_update,
-        "next_run": app.state.scheduler_next_run if hasattr(app.state, 'scheduler_next_run') else None,
+        "next_run": (
+            app.state.scheduler_next_run 
+            if hasattr(app.state, 'scheduler_next_run') 
+            else None
+        ),
         "cron": cron,
         "cli_version": cli_version,
         "channel_count": len(parse_channels_from_m3u()),
@@ -467,7 +490,9 @@ async def xtreme_player_api(
     try:
         username, password = validate_credentials(username, password)
         if not verify_credentials(username, password):
-            logger.warning(f"Invalid credentials attempt from {request.client.host} for user {username}")
+            logger.warning(
+                f"Invalid credentials attempt from {request.client.host} for user {username}"
+            )
             return JSONResponse({"user_info": {"auth": 0}}, status_code=401)
     except HTTPException as e:
         logger.warning(f"Credential validation failed from {request.client.host}: {e.detail}")
@@ -616,8 +641,14 @@ async def get_credentials(request: Request):
         "direct_urls": {
             "standard_m3u": f"{protocol}://{host}/m3u",
             "standard_xml": f"{protocol}://{host}/xml",
-            "xtreme_m3u": f"{protocol}://{host}/get.php?username={creds.get('username')}&password={display_password if display_password != '********' else '[PASSWORD]'}",
-            "xtreme_xml": f"{protocol}://{host}/xmltv.php?username={creds.get('username')}&password={display_password if display_password != '********' else '[PASSWORD]'}"
+            "xtreme_m3u": (
+                f"{protocol}://{host}/get.php?username={creds.get('username')}"
+                f"&password={display_password if display_password != '********' else '[PASSWORD]'}"
+            ),
+            "xtreme_xml": (
+                f"{protocol}://{host}/xmltv.php?username={creds.get('username')}"
+                f"&password={display_password if display_password != '********' else '[PASSWORD]'}"
+            )
         }
     }
 
@@ -648,7 +679,9 @@ async def get_stream_codes(request: Request):
 
 
 # Cron scheduler constants and patterns
-CRON_RE = re.compile(r"^\s*([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s*$")
+CRON_RE = re.compile(
+    r"^\s*([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s*$"
+)
 DEFAULT_FALLBACK_HOUR = 3
 MAX_SCHEDULE_SEARCH_MINUTES = 24 * 60 + 2
 
@@ -858,4 +891,5 @@ async def on_startup():
 
 
 def create_app():
+    """Create and configure the FastAPI application instance."""
     return app

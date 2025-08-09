@@ -20,6 +20,7 @@ class CredentialManager:
     """Secure credential management for Xtreme Codes API."""
     
     def __init__(self):
+        """Initialize credential manager with temporary password storage."""
         self._current_password = None  # Temporary storage for new installations
     
     def get_stored_credentials(self) -> Dict[str, Any]:
@@ -187,7 +188,9 @@ def get_server_info(request: Request) -> Dict[str, Any]:
         }
     }
 
-async def xtreme_auth_middleware(username: str = Query(None), password: str = Query(None)) -> Dict[str, str]:
+async def xtreme_auth_middleware(
+    username: str = Query(None), password: str = Query(None)
+) -> Dict[str, str]:
     """
     Middleware to verify Xtreme Codes credentials.
     
@@ -237,7 +240,9 @@ def generate_short_epg(channels: List[Dict[str, Any]]) -> str:
     
     return json.dumps(epg_data)
 
-def format_xtreme_m3u(channels: List[Dict[str, Any]], host: str, username: str, password: str) -> str:
+def format_xtreme_m3u(
+    channels: List[Dict[str, Any]], host: str, username: str, password: str
+) -> str:
     """
     Format M3U for Xtreme Codes API format.
     
@@ -261,7 +266,10 @@ def format_xtreme_m3u(channels: List[Dict[str, Any]], host: str, username: str, 
         stream_url = f"http://{host}/live/{username}/{password}/{ch_id}.ts"
         
         # EXTINF line with Xtreme Codes attributes
-        extinf = f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{ch_name}" tvg-logo="" group-title="Toonami"'
+        extinf = (
+            f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{ch_name}" '
+            f'tvg-logo="" group-title="Toonami"'
+        )
         if ch_num:
             extinf += f' tvg-chno="{ch_num}"'
         extinf += f',{ch_name}'
