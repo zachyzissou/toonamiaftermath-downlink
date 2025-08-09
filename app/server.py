@@ -20,33 +20,8 @@ from .xtreme_codes import (
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 PORT = int(os.environ.get("PORT", "7004"))
 CRON_SCHEDULE = os.environ.get("CRON_SCHEDULE", "0 3 * * *")
-# Try to find the CLI binary - use mock for Windows development
-CLI_BIN_PATHS = [
-    Path("/usr/local/bin/toonamiaftermath-cli"),  # Docker/Linux
-    Path(__file__).parent.parent / "mock_cli.py"  # Local development fallback
-]
-
-# Allow environment override for CLI binary path
-CLI_BIN: Optional[Path] = None
-env_cli = os.environ.get("CLI_BIN")
-if env_cli:
-    try:
-        candidate = Path(env_cli)
-        if candidate.exists():
-            CLI_BIN = candidate
-    except Exception:
-        CLI_BIN = None
-
-# Fallback to known locations if no env override or not found
-if CLI_BIN is None:
-    for path in CLI_BIN_PATHS:
-        if path.exists():
-            CLI_BIN = path
-            break
-
-# As a last resort, default to the first path (may not exist yet)
-if CLI_BIN is None:
-    CLI_BIN = CLI_BIN_PATHS[0]
+# Resolve CLI path: default to bundled binary, allow env override
+CLI_BIN: Path = Path(os.environ.get("CLI_BIN", "/usr/local/bin/toonamiaftermath-cli"))
 
 # Constants
 MIME_M3U = "application/x-mpegURL"
@@ -105,10 +80,6 @@ def write_state(state: Dict[str, Any]) -> None:
 
 
 async def run_cmd(cmd: List[str], cwd: Optional[str] = None) -> int:
-    # Handle Python mock CLI
-    if str(cmd[0]).endswith("mock_cli.py"):
-        cmd = ["python", str(cmd[0])] + cmd[1:]
-
     logger.info("Executing: %s%s", " ".join(cmd), f" (cwd={cwd})" if cwd else "")
     proc = await asyncio.create_subprocess_exec(
         *cmd,
@@ -123,15 +94,19 @@ async def run_cmd(cmd: List[str], cwd: Optional[str] = None) -> int:
 
 
 def ensure_cli_exists() -> None:
-    """Ensure CLI binary exists."""
+    """Ensure CLI binary exists and is executable, with helpful diagnostics."""
     if not CLI_BIN.exists():
-        raise RuntimeError(f"toonamiaftermath-cli not found at {CLI_BIN}")
+        raise RuntimeError(f"toonamiaftermath-cli not found at {CLI_BIN}. Set CLI_BIN env to override.")
+    # On Alpine, glibc-linked binaries may still fail at runtime; this checks basic executability
+    if not os.access(str(CLI_BIN), os.X_OK):
+        raise RuntimeError(f"toonamiaftermath-cli at {CLI_BIN} is not executable. chmod +x it or rebuild image.")
 
 
 async def generate_files() -> Dict[str, Any]:
     ensure_cli_exists()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     logger.info("Generating M3U and XMLTV via toonamiaftermath-cli (%s)", CLI_BIN)
+    logger.info("DATA_DIR=%s | WEB_DIR=%s | CRON_SCHEDULE=%s", DATA_DIR, WEB_DIR, os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE))
 
     # Try multiple invocation strategies to support different CLI versions
     attempts: List[Tuple[List[str], Optional[str]]] = [
@@ -144,9 +119,11 @@ async def generate_files() -> Dict[str, Any]:
     success = False
     for cmd, cwd in attempts:
         try:
-            rc = await run_cmd(cmd, cwd=cwd)
+            await run_cmd(cmd, cwd=cwd)
         except Exception as e:
             logger.warning("CLI execution failed for '%s': %s", " ".join(cmd), e)
+            if "No such file or directory" in str(e):
+                logger.warning("Binary may be missing required libs on Alpine. Ensure libc6-compat, gcompat, and libstdc++ are installed in the image.")
             continue
 
         # If explicit paths were provided, check them directly
@@ -190,11 +167,10 @@ async def generate_files() -> Dict[str, Any]:
 async def get_cli_version() -> Optional[str]:
     try:
         cmd = [str(CLI_BIN), "--version"]
-        # Handle Python mock CLI
-        if str(CLI_BIN).endswith("mock_cli.py"):
-            cmd = ["python", str(CLI_BIN), "--version"]
-        
-        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE)
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+        )
         out, _ = await proc.communicate()
         return out.decode().strip() or None
     except Exception:
@@ -546,7 +522,7 @@ async def on_startup():
         created_at = datetime.fromisoformat(creds.get('created_at', ''))
         time_since_creation = datetime.now(timezone.utc) - created_at
         created_recently = time_since_creation.total_seconds() < 60  # Created in last minute
-    except:
+    except Exception:
         pass
         
     if created_recently:

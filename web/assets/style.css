@@ -21,8 +21,8 @@ body{
 }
 .wrap{max-width:1100px; margin:0 auto; padding:28px}
 header{display:flex; align-items:center; gap:18px; flex-wrap:wrap; margin-bottom:18px}
-.logo{width:44px; height:44px; border-radius:10px; background:linear-gradient(135deg,var(--accent),var(--accent-2)); box-shadow:var(--glow); display:grid; place-items:center; overflow:hidden}
-.logo img{display:block; width:100%; height:100%}
+.logo{width:56px; height:56px; border-radius:12px; background:linear-gradient(135deg,var(--accent),var(--accent-2)); box-shadow:var(--glow); display:grid; place-items:center; overflow:hidden; padding:4px; outline:1px solid rgba(0,212,255,.25)}
+.logo img{display:block; width:100%; height:100%; border-radius:8px}
 .title{display:flex; flex-direction:column}
 .title h1{margin:0; font-size:1.4rem; letter-spacing:.6px}
 .title span{color:var(--muted); font-size:.92rem}
@@ -55,7 +55,9 @@ code{background:#0c1320; border:1px solid var(--border); padding:2px 6px; border
 .ffmpeg{white-space:pre-wrap; background:#0c1320; border:1px solid var(--border); padding:10px; border-radius:12px; font-size:.85rem; overflow:auto}
 
 .mt-12{margin-top:12px}
+.mt-16{margin-top:16px}
 .mb-10{margin-bottom:10px}
+.mb-6{margin-bottom:6px}
 .grid-col{display:grid; gap:8px}
 .mt-18{margin-top:18px}
 .muted{color:var(--muted)}
@@ -81,7 +83,7 @@ summary:hover{color:var(--ink)}
 /* Stream codes styling */
 .stream-codes-container{border:1px solid var(--border); border-radius:8px; padding:12px; background:var(--panel)}
 .url-item{display:flex; align-items:center; gap:8px; margin:6px 0; padding:6px; border-radius:4px; background:var(--bg)}
-.url-item label{font-weight:600; min-width:80px; color:var(--accent)}
+.url-item label, .url-label{font-weight:600; min-width:80px; color:var(--accent)}
 .url-item .url-display{flex:1; font-size:.85rem; background:transparent; padding:4px 6px}
 .btn-sm{background:var(--accent); color:white; border:none; padding:4px 8px; border-radius:4px; cursor:pointer; font-size:.75rem; transition:all .2s}
 .btn-sm:hover{opacity:.8}

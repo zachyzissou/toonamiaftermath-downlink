@@ -11,7 +11,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=7004 \
     CRON_SCHEDULE="0 3 * * *"
 
-RUN apk add --no-cache bash ca-certificates tzdata
+RUN apk add --no-cache bash ca-certificates gcompat libc6-compat libstdc++ tzdata
 
 WORKDIR /app
 # Copy only requirements first for better cache hits
