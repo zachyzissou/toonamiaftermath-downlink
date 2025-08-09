@@ -2,17 +2,17 @@
 <Container version="2">
   <Name>Toonami Aftermath: Downlink</Name>
   <Repository>toonami-downlink:latest</Repository>
-  <Registry>https://hub.docker.com/r/local/toonami-downlink</Registry>
+  <Registry>https://github.com/zachyzissou/toonamiaftermath-downlink</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>
   <Privileged>false</Privileged>
-  <Support>https://github.com/your-org/toonami-downlink</Support>
-  <Project>https://github.com/your-org/toonami-downlink</Project>
+  <Support>https://github.com/zachyzissou/toonamiaftermath-downlink</Support>
+  <Project>https://github.com/zachyzissou/toonamiaftermath-downlink</Project>
   <Overview>Downlink scrapes Toonami Aftermath feeds to generate and serve M3U and XMLTV guides compatible with Threadfin, Plex, and Jellyfin. Tapping into the underground broadcast feed.</Overview>
   <Category>MediaServer:Other</Category>
   <WebUI>http://[IP]:[PORT:7004]/</WebUI>
-  <Icon>https://raw.githubusercontent.com/your-org/toonami-downlink/main/web/assets/favicon.svg</Icon>
+  <Icon>https://raw.githubusercontent.com/zachyzissou/toonamiaftermath-downlink/main/web/assets/logo.svg</Icon>
   <ExtraParams></ExtraParams>
   <PostArgs></PostArgs>
   <CPUset/>
