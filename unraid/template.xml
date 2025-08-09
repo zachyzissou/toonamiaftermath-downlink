@@ -1,8 +1,8 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>Toonami Aftermath: Downlink</Name>
-  <Repository>toonami-downlink:latest</Repository>
-  <Registry>https://github.com/zachyzissou/toonamiaftermath-downlink</Registry>
+  <Repository>ghcr.io/zachyzissou/toonamiaftermath-downlink:latest</Repository>
+  <Registry>https://github.com/zachyzissou/toonamiaftermath-downlink/pkgs/container/toonamiaftermath-downlink</Registry>
   <Network>bridge</Network>
   <MyIP/>
   <Shell>bash</Shell>
@@ -21,6 +21,6 @@
   <DonateLink/>
   <Requires/>
   <Config Name="Web Port" Target="7004" Default="7004" Mode="tcp" Type="Port" Description="WebUI Port" Display="always" Required="true" Mask="false">7004</Config>
-  <Config Name="AppData" Target="/data" Default="/mnt/user/appdata/toonami-downlink" Mode="rw" Type="Path" Description="Persistent data directory" Display="always" Required="true" Mask="false">/mnt/user/appdata/toonami-downlink</Config>
+  <Config Name="AppData" Target="/data" Default="/mnt/user/appdata/toonamiaftermath-downlink" Mode="rw" Type="Path" Description="Persistent data directory" Display="always" Required="true" Mask="false">/mnt/user/appdata/toonamiaftermath-downlink</Config>
   <Config Name="CRON_SCHEDULE" Target="CRON_SCHEDULE" Default="0 3 * * *" Mode="" Type="Variable" Description="Cron schedule for updates (UTC)" Display="always" Required="false" Mask="false">0 3 * * *</Config>
 </Container>
