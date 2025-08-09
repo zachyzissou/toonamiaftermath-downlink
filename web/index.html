@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Toonami Aftermath: Downlink</title>
+  <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="/assets/style.css">
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo"><img src="/assets/logo.svg" alt="Downlink Logo" width="44" height="44"/></div>
+      <div class="title">
+        <h1>Toonami Aftermath: Downlink</h1>
+        <span>Tapping into the underground broadcast feed</span>
+      </div>
+    </header>
+
+    <div class="grid">
+      <section class="card">
+        <h2>Feeds</h2>
+        <div class="meta">
+          <div class="dot" id="status-dot"></div>
+          <div>Last update: <span id="last-update">—</span></div>
+          <div>Next scheduled: <span id="next-run">—</span></div>
+        </div>
+        <div class="actions">
+          <a class="btn" href="/m3u" download>⤓ Download M3U</a>
+          <a class="btn" href="/xml" download>⤓ Download XMLTV</a>
+          <button type="button" class="btn ghost" id="refresh">↻ Refresh now</button>
+        </div>
+        <div class="list mt-12" id="quick-stats" aria-live="polite"></div>
+      </section>
+
+      <aside class="card">
+        <h2>IPTV Setup</h2>
+        
+        <div class="tabs">
+          <button type="button" class="tab-btn" data-tab="xtreme">Xtreme Codes API</button>
+          <button type="button" class="tab-btn active" data-tab="direct">Direct URLs</button>
+        </div>
+        
+        <div class="tab-content hidden" id="tab-xtreme">
+          <div class="mb-10 muted">These credentials were auto-generated on first launch:</div>
+          <div class="grid-col">
+            <div><strong>Server:</strong> <code id="xtreme-url"></code></div>
+            <div><strong>Username:</strong> <code id="xtreme-user">Loading...</code></div>
+            <div><strong>Password:</strong> <code id="xtreme-pass">Loading...</code></div>
+          </div>
+          <button type="button" class="btn ghost mt-12" id="copy-xtreme">📋 Copy credentials</button>
+          <div class="setup-guide mt-12">
+            <details>
+              <summary>Popular IPTV Player Setup</summary>
+              <div class="guide-content">
+                <div class="guide-item">
+                  <strong>TiviMate:</strong> Add M3U Playlist → Xtreme Codes → Enter server, username, password
+                </div>
+                <div class="guide-item">
+                  <strong>IPTV Smarters:</strong> Add Playlist → Xtreme Codes → Enter server URL, username, password
+                </div>
+                <div class="guide-item">
+                  <strong>Perfect Player:</strong> Settings → Playlist → Add → Xtreme Codes → Enter details
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+        
+        <div class="tab-content" id="tab-direct">
+          <div class="mb-10 muted">Use these endpoints directly:</div>
+          <div class="grid-col">
+            <div>
+              <strong>M3U (Standard):</strong>
+              <code id="m3u-url"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="m3u-url">📋 Copy</button>
+            </div>
+            <div>
+              <strong>XMLTV:</strong>
+              <code id="xml-url"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="xml-url">📋 Copy</button>
+            </div>
+            <div>
+              <strong>Xtreme M3U:</strong>
+              <code id="xtreme-m3u-url"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="xtreme-m3u-url">📋 Copy</button>
+            </div>
+            <div>
+              <strong>Xtreme XML:</strong>
+              <code id="xtreme-xml-url"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="xtreme-xml-url">📋 Copy</button>
+            </div>
+          </div>
+          
+          <div class="mt-16">
+            <h4>Ready-to-Use Stream Code URLs:</h4>
+            <div class="mb-6 muted">Copy these URLs directly - no setup required!</div>
+            <div id="stream-codes-list" class="stream-codes-container">
+              <div class="url-item">
+                <span class="url-label">Loading...</span>
+                <code class="url-display">—</code>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+        <details class="mt-12">
+          <summary>FFmpeg Settings</summary>
+          <pre class="ffmpeg">-hide_banner -loglevel info -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 8000000 -analyzeduration 1M -probesize 1M -i [URL] -vf scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p -c:v h264_nvenc -preset p4 -b:v 4M -maxrate 5M -bufsize 8M -g 60 -keyint_min 60 -rc vbr_hq -bf 0 -c:a ac3 -ar 48000 -ac 2 -b:a 192k -af aresample=async=1:first_pts=0 -f mpegts -mpegts_flags +resend_headers -flush_packets 1 -muxpreload 0 -muxdelay 0 pipe:1</pre>
+        </details>
+      </aside>
+    </div>
+
+    <section class="card mt-18">
+      <h2>Channels</h2>
+      <div class="list" id="channels">
+        <div class="row" aria-hidden="true">
+          <div class="ch">—</div>
+          <div class="name">Loading…</div>
+          <div class="badge">—</div>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <div>Running <strong>Downlink</strong> • Status: <span id="status-text">Unknown</span></div>
+      <div>API: <code>/status</code> <code>/channels</code> <code>/m3u</code> <code>/xml</code></div>
+      <div><a href="https://github.com/chris102994/toonamiaftermath-cli" target="_blank" rel="noopener" class="powered-link">Powered by toonamiaftermath-cli</a></div>
+    </footer>
+  </div>
+
+  <script src="/assets/app.js"></script>
+</body>
+</html>
