@@ -104,12 +104,18 @@ def write_state(state: Dict[str, Any]) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2))
 
 
-async def run_cmd(cmd: List[str]) -> int:
+async def run_cmd(cmd: List[str], cwd: Optional[str] = None) -> int:
     # Handle Python mock CLI
     if str(cmd[0]).endswith("mock_cli.py"):
         cmd = ["python", str(cmd[0])] + cmd[1:]
-    
-    proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+
+    logger.info("Executing: %s%s", " ".join(cmd), f" (cwd={cwd})" if cwd else "")
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+        cwd=cwd
+    )
     assert proc.stdout
     async for line in proc.stdout:
         logger.info(line.decode(errors="ignore").rstrip())
@@ -125,27 +131,51 @@ def ensure_cli_exists() -> None:
 async def generate_files() -> Dict[str, Any]:
     ensure_cli_exists()
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info("Generating M3U and XMLTV via toonamiaftermath-cli")
-    
-    # Run the CLI with proper output paths
-    rc = await run_cmd([str(CLI_BIN), "run", "-m", str(M3U_PATH), "-x", str(XML_PATH)])
-    
-    if rc != 0:
-        # Try running without arguments and capturing output
-        logger.info("Falling back to basic run command")
-        await run_cmd([str(CLI_BIN), "run"])
-        
-        # Check if default files were created and move them
-        default_m3u = Path("/app/index.m3u")
-        default_xml = Path("/app/index.xml")
-        
-        if default_m3u.exists():
-            shutil.move(str(default_m3u), str(M3U_PATH))
-        if default_xml.exists():
-            shutil.move(str(default_xml), str(XML_PATH))
-    
-    if not M3U_PATH.exists() or not XML_PATH.exists():
-        raise RuntimeError("Failed to generate M3U/XML files")
+    logger.info("Generating M3U and XMLTV via toonamiaftermath-cli (%s)", CLI_BIN)
+
+    # Try multiple invocation strategies to support different CLI versions
+    attempts: List[Tuple[List[str], Optional[str]]] = [
+        ([str(CLI_BIN), "-m", str(M3U_PATH), "-x", str(XML_PATH)], None),
+        ([str(CLI_BIN), "run", "-m", str(M3U_PATH), "-x", str(XML_PATH)], None),
+        ([str(CLI_BIN)], str(DATA_DIR)),                   # defaults to index.* in cwd
+        ([str(CLI_BIN), "run"], str(DATA_DIR)),          # some versions require subcommand
+    ]
+
+    success = False
+    for cmd, cwd in attempts:
+        try:
+            rc = await run_cmd(cmd, cwd=cwd)
+        except Exception as e:
+            logger.warning("CLI execution failed for '%s': %s", " ".join(cmd), e)
+            continue
+
+        # If explicit paths were provided, check them directly
+        if M3U_PATH.exists() and XML_PATH.exists():
+            success = True
+            break
+
+        # Otherwise, check common defaults in DATA_DIR (and legacy /app)
+        default_m3u_candidates = [DATA_DIR / "index.m3u", Path("/app/index.m3u")] 
+        default_xml_candidates = [DATA_DIR / "index.xml", Path("/app/index.xml")] 
+        for dm in default_m3u_candidates:
+            if dm.exists() and dm != M3U_PATH:
+                try:
+                    shutil.move(str(dm), str(M3U_PATH))
+                except Exception:
+                    shutil.copyfile(str(dm), str(M3U_PATH))
+        for dx in default_xml_candidates:
+            if dx.exists() and dx != XML_PATH:
+                try:
+                    shutil.move(str(dx), str(XML_PATH))
+                except Exception:
+                    shutil.copyfile(str(dx), str(XML_PATH))
+
+        if M3U_PATH.exists() and XML_PATH.exists():
+            success = True
+            break
+
+    if not success:
+        raise RuntimeError("Failed to generate M3U/XML files after multiple attempts")
 
     # Update state
     state = read_state()
