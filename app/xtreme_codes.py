@@ -12,6 +12,37 @@ from fastapi.responses import Response
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
 CREDENTIALS_FILE = DATA_DIR / "credentials.json"
 
+# Security constants
+SALT_LENGTH = 32
+PASSWORD_MIN_LENGTH = 8
+
+class CredentialManager:
+    """Secure credential management for Xtreme Codes API."""
+    
+    def __init__(self):
+        self._current_password = None  # Temporary storage for new installations
+    
+    def get_stored_credentials(self) -> Dict[str, Any]:
+        """Get credentials from storage (without password)."""
+        if CREDENTIALS_FILE.exists():
+            try:
+                with open(CREDENTIALS_FILE, 'r') as f:
+                    return json.load(f)
+            except Exception:
+                pass
+        return {}
+    
+    def get_password_for_display(self) -> Optional[str]:
+        """Get password for display in UI (only available after generation)."""
+        return self._current_password
+    
+    def clear_password_cache(self):
+        """Clear the cached password (call after displaying to user)."""
+        self._current_password = None
+
+# Global instance
+_credential_manager = CredentialManager()
+
 def generate_credentials() -> Dict[str, str]:
     """Generate unique username and password for this installation."""
     # Generate more memorable but still unique credentials
@@ -19,45 +50,66 @@ def generate_credentials() -> Dict[str, str]:
     password = secrets.token_urlsafe(16)  # Longer, more secure password
     return {"username": username, "password": password}
 
+def hash_password_secure(password: str, salt: bytes = None) -> tuple[str, str]:
+    """Securely hash password with salt."""
+    if salt is None:
+        salt = secrets.token_bytes(SALT_LENGTH)
+    
+    # Use PBKDF2 for secure password hashing
+    password_hash = hashlib.pbkdf2_hmac('sha256', password.encode(), salt, 100000)
+    return password_hash.hex(), salt.hex()
+
 def hash_password(password: str) -> str:
-    """Simple hash for password storage."""
+    """Simple hash for password storage (backward compatibility)."""
     return hashlib.sha256(password.encode()).hexdigest()
 
 def load_or_create_credentials() -> Dict[str, str]:
     """Load existing credentials or create new ones."""
-    if CREDENTIALS_FILE.exists():
-        try:
-            with open(CREDENTIALS_FILE, 'r') as f:
-                creds = json.load(f)
-                # Ensure we have all required fields
-                if all(k in creds for k in ["username", "password", "password_hash", "created_at"]):
-                    return creds
-        except Exception:
-            pass
+    stored_creds = _credential_manager.get_stored_credentials()
+    
+    if stored_creds and all(k in stored_creds for k in ["username", "password_hash", "created_at"]):
+        # Return existing credentials (without password for security)
+        result = dict(stored_creds)
+        # Only add password if it's cached (new generation)
+        cached_password = _credential_manager.get_password_for_display()
+        if cached_password:
+            result["password"] = cached_password
+        return result
     
     # Generate new credentials - first install or corrupted file
     print("Generating unique Xtreme Codes credentials for first-time setup...")
-    creds = generate_credentials()
-    creds["password_hash"] = hash_password(creds["password"])
-    creds["created_at"] = datetime.now(timezone.utc).isoformat()
-    creds["installation_id"] = secrets.token_hex(8)  # Unique installation ID
+    new_creds = generate_credentials()
     
-    # Save credentials
+    # Store only hashed password and metadata
+    stored_creds = {
+        "username": new_creds["username"],
+        "password_hash": hash_password(new_creds["password"]),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "installation_id": secrets.token_hex(8)
+    }
+    
+    # Save credentials (without plain text password)
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     with open(CREDENTIALS_FILE, 'w') as f:
-        json.dump(creds, f, indent=2)
+        json.dump(stored_creds, f, indent=2)
     
-    print(f"Generated credentials - Username: {creds['username']}")
+    print(f"Generated credentials - Username: {stored_creds['username']}")
     print("View full credentials in the WebUI once started")
     
-    return creds
+    # Cache password temporarily for display
+    _credential_manager._current_password = new_creds["password"]
+    
+    # Return with temporary password for initial display
+    result = dict(stored_creds)
+    result["password"] = new_creds["password"]
+    return result
 
 def verify_credentials(username: str, password: str) -> bool:
     """Verify username and password."""
-    creds = load_or_create_credentials()
+    stored_creds = _credential_manager.get_stored_credentials()
     return (
-        creds.get("username") == username and 
-        creds.get("password_hash") == hash_password(password)
+        stored_creds.get("username") == username and 
+        stored_creds.get("password_hash") == hash_password(password)
     )
 
 def get_server_info(request: Request) -> Dict[str, Any]:

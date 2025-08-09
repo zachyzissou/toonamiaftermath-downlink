@@ -3,6 +3,7 @@ import json
 import shutil
 import asyncio
 import logging
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, List, Dict, Any, Tuple
@@ -14,29 +15,83 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from .xtreme_codes import (
     load_or_create_credentials, verify_credentials, get_server_info,
-    generate_short_epg, format_xtreme_m3u
+    generate_short_epg, format_xtreme_m3u, _credential_manager
 )
 
+# Configuration constants
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
-PORT = int(os.environ.get("PORT", "7004"))
-CRON_SCHEDULE = os.environ.get("CRON_SCHEDULE", "0 3 * * *")
+PORT = int(os.environ.get("PORT", DEFAULT_PORT))
+CRON_SCHEDULE = os.environ.get("CRON_SCHEDULE", DEFAULT_CRON_SCHEDULE)
 # Resolve CLI path: default to bundled binary, allow env override
 CLI_BIN: Path = Path(os.environ.get("CLI_BIN", "/usr/local/bin/toonamiaftermath-cli"))
 
-# Constants
+# Security constants
+MAX_STREAM_CODE_LENGTH = 50
+VALID_STREAM_CODE_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+ALLOWED_ORIGINS = os.environ.get("ALLOWED_ORIGINS", "").split(",") if os.environ.get("ALLOWED_ORIGINS") else []
+
+# Application constants
+DEFAULT_CRON_SCHEDULE = "0 3 * * *"
+DEFAULT_PORT = 7004
+MAX_CHANNELS_TO_LOG = 100
+
+# MIME type constants
 MIME_M3U = "application/x-mpegURL"
 MIME_XML = "application/xml"
-MSG_INVALID_CREDENTIALS = "Invalid credentials"
 
+# Error messages
+MSG_INVALID_CREDENTIALS = "Invalid credentials"
+MSG_M3U_NOT_FOUND = "M3U not yet generated"
+MSG_XML_NOT_FOUND = "XML not yet generated"
+
+# File paths
 M3U_PATH = DATA_DIR / "index.m3u"
 XML_PATH = DATA_DIR / "index.xml"
 STATE_PATH = DATA_DIR / "state.json"
 
+def validate_stream_code(stream_code: str) -> str:
+    """Validate and sanitize stream code input."""
+    if not stream_code:
+        raise HTTPException(status_code=400, detail="Stream code cannot be empty")
+    
+    if len(stream_code) > MAX_STREAM_CODE_LENGTH:
+        raise HTTPException(status_code=400, detail="Stream code too long")
+    
+    if not VALID_STREAM_CODE_PATTERN.match(stream_code):
+        raise HTTPException(status_code=400, detail="Invalid stream code format")
+    
+    return stream_code
+
+def validate_credentials(username: str, password: str) -> tuple[str, str]:
+    """Validate credential inputs."""
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password required")
+    
+    if len(username) > 100 or len(password) > 500:
+        raise HTTPException(status_code=400, detail="Credentials too long")
+    
+    return username.strip(), password.strip()
+
 app = FastAPI(title="Toonami Aftermath: Downlink")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_credentials=False, allow_methods=["*"], allow_headers=["*"]
-)
+
+# Configure CORS more securely
+if ALLOWED_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=ALLOWED_ORIGINS,
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"]
+    )
+else:
+    # Development mode - allow localhost origins only
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["http://localhost:*", "http://127.0.0.1:*"],
+        allow_credentials=False,
+        allow_methods=["GET", "POST"],
+        allow_headers=["*"]
+    )
 
 # Mount Web UI
 WEB_DIR = Path(os.environ.get("WEB_DIR", "/web")).resolve()
@@ -66,40 +121,66 @@ logger = logging.getLogger("downlink")
 
 
 def read_state() -> Dict[str, Any]:
+    """Read state from file with proper error handling."""
     if STATE_PATH.exists():
         try:
-            return json.loads(STATE_PATH.read_text())
-        except Exception:
+            content = STATE_PATH.read_text()
+            return json.loads(content)
+        except (json.JSONDecodeError, OSError) as e:
+            logger.warning(f"Failed to read state file: {e}")
             return {}
     return {}
 
 
 def write_state(state: Dict[str, Any]) -> None:
-    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    STATE_PATH.write_text(json.dumps(state, indent=2))
+    """Write state to file with proper error handling."""
+    try:
+        STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        STATE_PATH.write_text(json.dumps(state, indent=2))
+        logger.debug("State file updated successfully")
+    except Exception as e:
+        logger.error(f"Failed to write state file: {e}")
 
 
 async def run_cmd(cmd: List[str], cwd: Optional[str] = None) -> int:
+    """Execute command asynchronously with proper error handling."""
     logger.info("Executing: %s%s", " ".join(cmd), f" (cwd={cwd})" if cwd else "")
-    proc = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-        cwd=cwd
-    )
-    assert proc.stdout
-    async for line in proc.stdout:
-        logger.info(line.decode(errors="ignore").rstrip())
-    return await proc.wait()
+    
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            cwd=cwd
+        )
+        
+        if not proc.stdout:
+            logger.error("Failed to capture command output")
+            return -1
+            
+        async for line in proc.stdout:
+            decoded_line = line.decode(errors="ignore").rstrip()
+            if decoded_line:  # Only log non-empty lines
+                logger.info(decoded_line)
+                
+        return_code = await proc.wait()
+        logger.info(f"Command completed with return code: {return_code}")
+        return return_code
+        
+    except Exception as e:
+        logger.error(f"Command execution failed: {e}")
+        return -1
 
 
 def ensure_cli_exists() -> None:
     """Ensure CLI binary exists and is executable, with helpful diagnostics."""
     if not CLI_BIN.exists():
-        raise RuntimeError(f"toonamiaftermath-cli not found at {CLI_BIN}. Set CLI_BIN env to override.")
-    # On Alpine, glibc-linked binaries may still fail at runtime; this checks basic executability
+        raise FileNotFoundError(f"toonamiaftermath-cli not found at {CLI_BIN}. Set CLI_BIN env to override.")
+    
     if not os.access(str(CLI_BIN), os.X_OK):
-        raise RuntimeError(f"toonamiaftermath-cli at {CLI_BIN} is not executable. chmod +x it or rebuild image.")
+        raise PermissionError(f"toonamiaftermath-cli at {CLI_BIN} is not executable. chmod +x it or rebuild image.")
+    
+    logger.info(f"CLI binary found and executable: {CLI_BIN}")
 
 
 async def generate_files() -> Dict[str, Any]:
@@ -178,45 +259,68 @@ async def get_cli_version() -> Optional[str]:
 
 
 def _parse_extinf(line: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
-    parts = line.split(",", 1)
-    attrs = parts[0]
-    name = parts[1].strip() if len(parts) > 1 else None
-    def get_attr(k: str) -> Optional[str]:
-        kq = k + "=\""
-        i = attrs.find(kq)
-        if i == -1:
-            return None
-        j = attrs.find("\"", i + len(kq))
-        return attrs[i+len(kq):j] if j != -1 else None
-    chan_id = get_attr("tvg-id") or get_attr("channel-id") or "ta"
-    number = get_attr("tvg-chno") or get_attr("channel-number")
-    return chan_id, number, name
+    """Parse EXTINF line from M3U file."""
+    try:
+        parts = line.split(",", 1)
+        attrs = parts[0]
+        name = parts[1].strip() if len(parts) > 1 else None
+        
+        def get_attr(k: str) -> Optional[str]:
+            kq = k + "=\""
+            i = attrs.find(kq)
+            if i == -1:
+                return None
+            j = attrs.find("\"", i + len(kq))
+            return attrs[i+len(kq):j] if j != -1 else None
+        
+        chan_id = get_attr("tvg-id") or get_attr("channel-id") or "ta"
+        number = get_attr("tvg-chno") or get_attr("channel-number")
+        return chan_id, number, name
+    except Exception as e:
+        logger.warning(f"Failed to parse EXTINF line: {line[:50]}... Error: {e}")
+        return None, None, None
 
 
 def parse_channels_from_m3u() -> List[Dict[str, Any]]:
+    """Parse channel information from M3U file."""
     channels: List[Dict[str, Any]] = []
     if not M3U_PATH.exists():
+        logger.warning("M3U file does not exist, returning empty channel list")
         return channels
+    
     try:
         pending: Optional[Dict[str, Any]] = None
-        for raw in M3U_PATH.read_text(errors="ignore").splitlines():
+        content = M3U_PATH.read_text(errors="ignore")
+        
+        for line_num, raw in enumerate(content.splitlines(), 1):
             line = raw.strip()
             if not line:
                 continue
+                
             if line.startswith("#EXTINF"):
                 chan_id, number, name = _parse_extinf(line)
-                pending = {"id": chan_id, "number": number, "name": name}
+                if name:  # Only create entry if we got a valid name
+                    pending = {"id": chan_id, "number": number, "name": name}
+                    
             elif not line.startswith("#") and pending and pending.get("name"):
-                pending["url"] = line
-                channels.append(pending)
+                # Validate URL format
+                if line.startswith(('http://', 'https://', 'rtmp://')):
+                    pending["url"] = line
+                    channels.append(pending)
+                else:
+                    logger.warning(f"Invalid URL format at line {line_num}: {line[:50]}...")
                 pending = None
+                
     except Exception as e:
-        logger.warning("Failed parsing M3U: %s", e)
+        logger.error(f"Failed parsing M3U: {e}")
+        
+    logger.info(f"Parsed {len(channels)} channels from M3U")
     return channels
 
 
 @app.get("/status")
 async def status():
+    """Get application status including last update, next run, and channel count."""
     state = read_state()
     last_update = state.get("last_update")
     cron = os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
@@ -233,29 +337,41 @@ async def status():
 
 @app.get("/m3u")
 async def get_m3u():
-    """Standard M3U playlist without stream codes."""
+    """Get the M3U playlist file without stream codes."""
     if not M3U_PATH.exists():
-        raise HTTPException(status_code=404, detail="M3U not yet generated")
-    return Response(M3U_PATH.read_bytes(), media_type=MIME_M3U)
+        raise HTTPException(status_code=404, detail=MSG_M3U_NOT_FOUND)
+    
+    try:
+        return Response(M3U_PATH.read_bytes(), media_type=MIME_M3U)
+    except Exception as e:
+        logger.error(f"Failed to read M3U file: {e}")
+        raise HTTPException(status_code=500, detail="Failed to read M3U file")
 
 
 @app.get("/m3u/stream-codes/{stream_code}")
 async def get_m3u_with_stream_code(stream_code: str):
     """M3U playlist with stream codes appended to URLs."""
-    if not M3U_PATH.exists():
-        raise HTTPException(status_code=404, detail="M3U not yet generated")
+    # Validate stream code input
+    validated_code = validate_stream_code(stream_code)
     
-    content = M3U_PATH.read_text(errors="ignore")
-    lines = []
-    for line in content.splitlines():
-        if line.strip() and not line.startswith("#"):
-            # This is a URL line, add stream code
-            if "?" in line:
-                line = f"{line}&code={stream_code}"
-            else:
-                line = f"{line}?code={stream_code}"
-        lines.append(line)
-    return Response("\n".join(lines), media_type=MIME_M3U)
+    if not M3U_PATH.exists():
+        raise HTTPException(status_code=404, detail=MSG_M3U_NOT_FOUND)
+    
+    try:
+        content = M3U_PATH.read_text(errors="ignore")
+        lines = []
+        for line in content.splitlines():
+            if line.strip() and not line.startswith("#"):
+                # This is a URL line, add stream code
+                if "?" in line:
+                    line = f"{line}&code={validated_code}"
+                else:
+                    line = f"{line}?code={validated_code}"
+            lines.append(line)
+        return Response("\n".join(lines), media_type=MIME_M3U)
+    except Exception as e:
+        logger.error(f"Failed to process M3U with stream code: {e}")
+        raise HTTPException(status_code=500, detail="Failed to process M3U file")
 
 
 @app.get("/xml")
@@ -286,12 +402,23 @@ async def xtreme_player_api(
     action: str = Query(None)
 ):
     """Xtreme Codes API endpoint."""
-    # Verify credentials
-    if not username or not password or not verify_credentials(username, password):
+    # Validate and verify credentials
+    if not username or not password:
+        logger.warning(f"Authentication attempt without credentials from {request.client.host}")
+        return JSONResponse({"user_info": {"auth": 0}}, status_code=401)
+    
+    try:
+        username, password = validate_credentials(username, password)
+        if not verify_credentials(username, password):
+            logger.warning(f"Invalid credentials attempt from {request.client.host} for user {username}")
+            return JSONResponse({"user_info": {"auth": 0}}, status_code=401)
+    except HTTPException as e:
+        logger.warning(f"Credential validation failed from {request.client.host}: {e.detail}")
         return JSONResponse({"user_info": {"auth": 0}}, status_code=401)
     
     request.state.username = username
     request.state.password = password
+    logger.info(f"Successful authentication for user {username}")
     
     if action == "get_live_categories":
         return JSONResponse([{"category_id": "1", "category_name": "Toonami", "parent_id": 0}])
@@ -334,7 +461,13 @@ async def xtreme_get(
     output_param: str = Query("ts", alias="output")
 ):
     """Xtreme Codes get.php endpoint for M3U."""
-    if not username or not password or not verify_credentials(username, password):
+    try:
+        username, password = validate_credentials(username, password)
+        if not verify_credentials(username, password):
+            logger.warning(f"Invalid credentials for M3U request from {request.client.host}")
+            return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
+    except HTTPException as e:
+        logger.warning(f"M3U request validation failed from {request.client.host}: {e.detail}")
         return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
     
     channels = parse_channels_from_m3u()
@@ -346,11 +479,18 @@ async def xtreme_get(
 
 @app.get("/xmltv.php")
 async def xtreme_xmltv(
+    request: Request,
     username: str = Query(None),
     password: str = Query(None)
 ):
     """Xtreme Codes XMLTV endpoint."""
-    if not username or not password or not verify_credentials(username, password):
+    try:
+        username, password = validate_credentials(username, password)
+        if not verify_credentials(username, password):
+            logger.warning(f"Invalid credentials for XMLTV request from {request.client.host}")
+            return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
+    except HTTPException as e:
+        logger.warning(f"XMLTV request validation failed from {request.client.host}: {e.detail}")
         return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
     
     if not XML_PATH.exists():
@@ -361,13 +501,20 @@ async def xtreme_xmltv(
 
 @app.get("/live/{username}/{password}/{stream_id}.{ext}")
 async def xtreme_stream(
+    request: Request,
     username: str,
     password: str,
     stream_id: str,
     ext: str
 ):
     """Xtreme Codes live stream redirect."""
-    if not verify_credentials(username, password):
+    try:
+        username, password = validate_credentials(username, password)
+        if not verify_credentials(username, password):
+            logger.warning(f"Invalid credentials for stream {stream_id} from {request.client.host}")
+            return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
+    except HTTPException as e:
+        logger.warning(f"Stream request validation failed from {request.client.host}: {e.detail}")
         return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
     
     # Find the actual stream URL
@@ -376,8 +523,10 @@ async def xtreme_stream(
         if ch.get("id") == stream_id or str(ch.get("id", "")).replace(".", "_") == stream_id:
             stream_url = ch.get("url", "")
             if stream_url:
+                logger.info(f"Stream redirect for {stream_id} to user {username}")
                 return RedirectResponse(url=stream_url, status_code=302)
     
+    logger.warning(f"Stream {stream_id} not found for user {username}")
     raise HTTPException(status_code=404, detail="Stream not found")
 
 
@@ -388,13 +537,20 @@ async def get_credentials(request: Request):
     host = request.headers.get('host', 'localhost:7004')
     protocol = "https" if request.url.scheme == "https" else "http"
     
+    # Get password for display (only available for new installations)
+    display_password = _credential_manager.get_password_for_display()
+    if not display_password:
+        # For existing installations, password is not displayed for security
+        display_password = "********"
+    
     return {
         "username": creds.get("username"),
-        "password": creds.get("password"),
+        "password": display_password,
         "created_at": creds.get("created_at"),
         "installation_id": creds.get("installation_id"),
         "server_url": host,
         "instructions": "Use these credentials in your IPTV player's Xtreme Codes API settings",
+        "security_note": "Password is only shown once after generation for security",
         "setup_guide": {
             "tivimate": "Add M3U Playlist → Xtreme Codes → Enter server, username, password",
             "iptv_smarters": "Add Playlist → Xtreme Codes → Enter server URL, username, password", 
@@ -403,8 +559,8 @@ async def get_credentials(request: Request):
         "direct_urls": {
             "standard_m3u": f"{protocol}://{host}/m3u",
             "standard_xml": f"{protocol}://{host}/xml",
-            "xtreme_m3u": f"{protocol}://{host}/get.php?username={creds.get('username')}&password={creds.get('password')}&type=m3u_plus",
-            "xtreme_xml": f"{protocol}://{host}/xmltv.php?username={creds.get('username')}&password={creds.get('password')}"
+            "xtreme_m3u": f"{protocol}://{host}/get.php?username={creds.get('username')}&password={display_password if display_password != '********' else '[PASSWORD]'}",
+            "xtreme_xml": f"{protocol}://{host}/xmltv.php?username={creds.get('username')}&password={display_password if display_password != '********' else '[PASSWORD]'}"
         }
     }
 
