@@ -1,6 +1,6 @@
 <?xml version="1.0"?>
 <Container version="2">
-  <Name>Toonami Aftermath: Downlink</Name>
+  <Name>ToonamiAftermath-Downlink</Name>
   <Repository>ghcr.io/zachyzissou/toonamiaftermath-downlink:latest</Repository>
   <Registry>https://github.com/zachyzissou/toonamiaftermath-downlink/pkgs/container/toonamiaftermath-downlink</Registry>
   <Network>bridge</Network>
