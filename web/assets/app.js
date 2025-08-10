@@ -11,6 +11,46 @@ const xtremeUrl = byId('xtreme-url');
 const xtremeUser = byId('xtreme-user');
 const xtremePass = byId('xtreme-pass');
 
+// Robust clipboard helper: tries navigator.clipboard in secure contexts,
+// falls back to a hidden textarea + execCommand('copy') for HTTP or older browsers.
+async function copyTextToClipboard(text) {
+  if (!text && text !== '') throw new Error('No text to copy');
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) {
+  console.debug('navigator.clipboard write failed, falling back', e);
+  }
+  // Fallback using a temporary textarea (works on HTTP and older browsers)
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly', '');
+  ta.style.position = 'fixed';
+  ta.style.top = '-1000px';
+  ta.style.left = '-1000px';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  let ok = false;
+  try {
+    if (document.queryCommandSupported && document.queryCommandSupported('copy')) {
+      // eslint-disable-next-line deprecation/deprecation
+      ok = document.execCommand('copy');
+    }
+  } catch (e) {
+    console.debug('document.execCommand copy failed', e);
+    ok = false;
+  }
+  document.body.removeChild(ta);
+  if (!ok) {
+    // As a last resort, show a prompt so users can copy manually
+    try { window.prompt('Copy to clipboard: Ctrl+C, Enter', text); } catch {}
+  }
+  return ok;
+}
+
 // Build absolute URLs for copy/paste
 const origin = window.location.origin;
 const host = window.location.host;
@@ -206,7 +246,7 @@ async function loadStreamCodes(){
   console.log('Loading stream codes...');
   const data = await fetchJSON('/stream-codes');
   console.log('Stream codes data:', data);
-  if(data && data.stream_code_urls){
+  if (data?.stream_code_urls){
     const container = byId('stream-codes-list');
     if(container) {
       container.innerHTML = '';
@@ -224,13 +264,13 @@ async function loadStreamCodes(){
       // Add copy functionality to stream code URLs
       container.querySelectorAll('.copy-url').forEach(btn => {
         btn.addEventListener('click', async () => {
-          const url = btn.dataset.url;
-          try {
-            await navigator.clipboard.writeText(url);
-            btn.textContent = '✓ Copied!';
-            setTimeout(() => { btn.textContent = '📋 Copy'; }, 2000);
-          } catch(e) {
-            console.warn('Copy failed', e);
+          const url = btn.dataset.url || '';
+          const ok = await copyTextToClipboard(url);
+          const prev = btn.textContent;
+          btn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
+          setTimeout(() => { btn.textContent = prev; }, 2000);
+          if (!ok) {
+            showErrorMessage('Clipboard access blocked by browser. Text shown in prompt for manual copy.');
           }
         });
       });
@@ -256,12 +296,11 @@ if (copyBtn) {
     const userText = xtremeUser ? xtremeUser.textContent : '';
     const passText = xtremePass ? xtremePass.textContent : '';
     const text = `Server: ${serverText}\nUsername: ${userText}\nPassword: ${passText}`;
-    try {
-      await navigator.clipboard.writeText(text);
-      copyBtn.textContent = '✓ Copied!';
-      setTimeout(() => { copyBtn.textContent = '📋 Copy credentials'; }, 2000);
-    } catch(e) {
-      console.warn('Copy failed', e);
+    const ok = await copyTextToClipboard(text);
+    copyBtn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
+    setTimeout(() => { copyBtn.textContent = '📋 Copy credentials'; }, 2000);
+    if (!ok) {
+      showErrorMessage('Clipboard access blocked by browser. Text shown in prompt for manual copy.');
     }
   });
 }
@@ -276,16 +315,21 @@ setInterval(loadStatus, 30000);
 document.querySelectorAll('.copy-inline').forEach((btn) => {
   btn.addEventListener('click', async () => {
     const targetId = btn.getAttribute('data-target');
+    const directText = btn.getAttribute('data-text');
     const el = targetId ? byId(targetId) : null;
-    const text = el ? el.textContent : '';
+    let text = '';
+    if (directText && directText.length) {
+      text = directText;
+    } else if (el && el.textContent) {
+      text = el.textContent;
+    }
     if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      const prev = btn.textContent;
-      btn.textContent = '✓ Copied!';
-      setTimeout(() => { btn.textContent = prev; }, 2000);
-    } catch (e) {
-      console.warn('Copy failed', e);
+    const ok = await copyTextToClipboard(text);
+    const prev = btn.textContent;
+    btn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
+    setTimeout(() => { btn.textContent = prev; }, 2000);
+    if (!ok) {
+      showErrorMessage('Clipboard access blocked by browser. Text shown in prompt for manual copy.');
     }
   });
 });
