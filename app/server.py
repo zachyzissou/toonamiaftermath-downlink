@@ -1,4 +1,5 @@
 import os
+import mimetypes
 import json
 import shutil
 import asyncio
@@ -105,6 +106,15 @@ WEB_DIR = Path(os.environ.get("WEB_DIR", "/web")).resolve()
 # Only mount static files if the directory exists
 def setup_web_routes():
     """Setup web UI routes and static file serving."""
+    # Ensure correct MIME types for common static assets (especially SVG)
+    try:
+        mimetypes.add_type('image/svg+xml', '.svg')
+        mimetypes.add_type('image/svg+xml', '.svgz')
+        mimetypes.add_type('text/css', '.css')
+        mimetypes.add_type('application/javascript', '.js')
+    except Exception:
+        pass
+
     if (WEB_DIR / "assets").exists():
         app.mount("/assets", StaticFiles(directory=str(WEB_DIR / "assets")), name="assets")
     

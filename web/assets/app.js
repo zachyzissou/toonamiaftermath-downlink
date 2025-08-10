@@ -333,3 +333,17 @@ document.querySelectorAll('.copy-inline').forEach((btn) => {
     }
   });
 });
+
+// Logo overlay fallback: if local PNG missing, swap to remote reference image
+window.addEventListener('DOMContentLoaded', () => {
+  const overlay = document.querySelector('.logo .logo-inc');
+  if (!overlay) return;
+  const img = new Image();
+  img.onload = () => {
+    /* local asset exists, nothing to do */
+  };
+  img.onerror = () => {
+    overlay.src = 'https://i.imgur.com/y0aF3SA.png?1';
+  };
+  img.src = overlay.src;
+});
