@@ -1,17 +1,24 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
   <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#00d4ff"/>
-      <stop offset="100%" stop-color="#6bffb7"/>
+    <linearGradient id="g" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00E5FF"/>
+      <stop offset="100%" stop-color="#21FFA1"/>
     </linearGradient>
-    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-      <feGaussianBlur stdDeviation="2" result="b"/>
+    <filter id="glow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur stdDeviation="1.6" result="b"/>
       <feMerge>
         <feMergeNode in="b"/>
         <feMergeNode in="SourceGraphic"/>
       </feMerge>
     </filter>
   </defs>
-  <rect x="8" y="8" width="48" height="48" rx="10" fill="#0f1623" stroke="#1c273a"/>
-  <path d="M22 20h20v6h-7v18h-6V26h-7z" fill="url(#g)" filter="url(#glow)"/>
+  <!-- Dark tile to ensure contrast in browser chrome -->
+  <rect x="6" y="6" width="52" height="52" rx="12" fill="#0B111B" stroke="#132033"/>
+  <!-- Neon ring -->
+  <circle cx="32" cy="32" r="16" stroke="url(#g)" stroke-width="3" fill="none" filter="url(#glow)"/>
+  <!-- Down arrow -->
+  <g stroke="#D7E6FF" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" filter="url(#glow)">
+    <path d="M32 22v12"/>
+    <path d="M26 30l6 6 6-6"/>
+  </g>
 </svg>
