@@ -1,4 +1,4 @@
-const byId = (id)=>document.getElementById(id);
+const byId = id => document.getElementById(id);
 const statusDot = byId('status-dot');
 const statusText = byId('status-text');
 const lastUpdate = byId('last-update');
@@ -14,14 +14,14 @@ const xtremePass = byId('xtreme-pass');
 // Robust clipboard helper: tries navigator.clipboard in secure contexts,
 // falls back to a hidden textarea + execCommand('copy') for HTTP or older browsers.
 async function copyTextToClipboard(text) {
-  if (!text && text !== '') throw new Error('No text to copy');
+  if (!text && text !== '') {throw new Error('No text to copy');}
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
       return true;
     }
   } catch (e) {
-  console.debug('navigator.clipboard write failed, falling back', e);
+    console.debug('navigator.clipboard write failed, falling back', e);
   }
   // Fallback using a temporary textarea (works on HTTP and older browsers)
   const ta = document.createElement('textarea');
@@ -35,8 +35,10 @@ async function copyTextToClipboard(text) {
   ta.select();
   let ok = false;
   try {
-    if (document.queryCommandSupported && document.queryCommandSupported('copy')) {
-      // eslint-disable-next-line deprecation/deprecation
+    if (
+      document.queryCommandSupported &&
+      document.queryCommandSupported('copy')
+    ) {
       ok = document.execCommand('copy');
     }
   } catch (e) {
@@ -46,27 +48,36 @@ async function copyTextToClipboard(text) {
   document.body.removeChild(ta);
   if (!ok) {
     // As a last resort, show a prompt so users can copy manually
-    try { window.prompt('Copy to clipboard: Ctrl+C, Enter', text); } catch {}
+    try {
+      window.prompt('Copy to clipboard: Ctrl+C, Enter', text);
+    } catch {
+      // Ignore prompt errors
+    }
   }
   return ok;
 }
 
 // Build absolute URLs for copy/paste
 const origin = window.location.origin;
-const host = window.location.host;
-if (m3uUrl) m3uUrl.textContent = origin + '/m3u';
-if (xmlUrl) xmlUrl.textContent = origin + '/xml';
-if (xtremeUrl) xtremeUrl.textContent = origin;
+if (m3uUrl) {
+  m3uUrl.textContent = origin + '/m3u';
+}
+if (xmlUrl) {
+  xmlUrl.textContent = origin + '/xml';
+}
+if (xtremeUrl) {
+  xtremeUrl.textContent = origin;
+}
 
-async function fetchJSON(path){
-  try{
-    const r = await fetch(path, {cache:'no-store'});
-    if(!r.ok) {
+async function fetchJSON(path) {
+  try {
+    const r = await fetch(path, { cache: 'no-store' });
+    if (!r.ok) {
       console.error(`HTTP ${r.status} fetching ${path}`);
       throw new Error(`HTTP ${r.status}: ${r.statusText}`);
     }
     return await r.json();
-  }catch(e){
+  } catch (e) {
     console.warn('Fetch failed', path, e);
     showErrorMessage(`Failed to load ${path}`);
     return null;
@@ -89,25 +100,25 @@ function showErrorMessage(message) {
     `;
     document.body.appendChild(banner);
   }
-  
+
   banner.textContent = message;
   banner.style.opacity = '1';
-  
+
   // Auto-hide after 5 seconds
   setTimeout(() => {
-    if (banner) banner.style.opacity = '0';
+    if (banner) {banner.style.opacity = '0';}
   }, 5000);
 }
 
 function hideErrorMessage() {
   const banner = document.getElementById('error-banner');
-  if (banner) banner.style.opacity = '0';
+  if (banner) {banner.style.opacity = '0';}
 }
 
-function setOnline(isOnline){
+function setOnline(isOnline) {
   statusDot.classList.toggle('offline', !isOnline);
   statusText.textContent = isOnline ? 'Online' : 'Offline';
-  
+
   if (isOnline) {
     hideErrorMessage();
   } else {
@@ -115,29 +126,31 @@ function setOnline(isOnline){
   }
 }
 
-function formatDate(ts){
-  if(!ts) return '—';
-  try{ 
+function formatDate(ts) {
+  if (!ts) {return '—';}
+  try {
     const date = new Date(ts);
     return isNaN(date.getTime()) ? String(ts) : date.toLocaleString();
-  } catch { 
-    return String(ts); 
+  } catch {
+    return String(ts);
   }
 }
 
-async function loadStatus(){
+async function loadStatus() {
   try {
     const data = await fetchJSON('/status');
-    if(!data){ 
-      setOnline(false); 
-      return; 
+    if (!data) {
+      setOnline(false);
+      return;
     }
-    
+
     setOnline(true);
     lastUpdate.textContent = formatDate(data.last_update);
     nextRun.textContent = data.next_run ? formatDate(data.next_run) : '—';
-    const streamEndpoints = data.stream_endpoints_available ? '✓ Available' : 'Not available';
-    
+    const streamEndpoints = data.stream_endpoints_available
+      ? '✓ Available'
+      : 'Not available';
+
     quickStats.innerHTML = `
       <div class="meta">
         <div>Channels: <strong>${data.channel_count ?? '—'}</strong></div>
@@ -151,26 +164,33 @@ async function loadStatus(){
   }
 }
 
-async function loadChannels(){
+async function loadChannels() {
   try {
     const list = await fetchJSON('/channels');
-    if(!list){ 
-      channelsEl.innerHTML = '<div class="row"><div class="ch">—</div><div class="name">Unable to load channels</div><div></div></div>'; 
-      return; 
-    }
-    
-    channelsEl.innerHTML = '';
-    if (list.length === 0) {
-      channelsEl.innerHTML = '<div class="row"><div class="ch">—</div><div class="name">No channels available</div><div></div></div>';
+    if (!list) {
+      channelsEl.innerHTML =
+        '<div class="row"><div class="ch">—</div><div class="name">Unable to load channels</div><div></div></div>';
       return;
     }
-    
-    list.forEach((c)=>{
+
+    channelsEl.innerHTML = '';
+    if (list.length === 0) {
+      channelsEl.innerHTML =
+        '<div class="row"><div class="ch">—</div><div class="name">No channels available</div><div></div></div>';
+      return;
+    }
+
+    list.forEach(c => {
       const row = document.createElement('div');
       row.className = 'row';
       // Escape HTML to prevent XSS
-      const safeName = (c.name || '').replace(/[<>&"]/g, (match) => {
-        const entities = {'<':'&lt;', '>':'&gt;', '&':'&amp;', '"':'&quot;'};
+      const safeName = (c.name || '').replace(/[<>&"]/g, match => {
+        const entities = {
+          '<': '&lt;',
+          '>': '&gt;',
+          '&': '&amp;',
+          '"': '&quot;',
+        };
         return entities[match];
       });
       row.innerHTML = `
@@ -179,25 +199,26 @@ async function loadChannels(){
         <div class="badge">${c.id ?? 'ta'}</div>`;
       channelsEl.appendChild(row);
     });
-    
+
     console.log(`Loaded ${list.length} channels`);
   } catch (error) {
     console.error('Channel load failed:', error);
-    channelsEl.innerHTML = '<div class="row"><div class="ch">—</div><div class="name">Error loading channels</div><div></div></div>';
+    channelsEl.innerHTML =
+      '<div class="row"><div class="ch">—</div><div class="name">Error loading channels</div><div></div></div>';
   }
 }
 
 // Enhanced refresh with user feedback
-byId('refresh').addEventListener('click', async (event)=>{
+byId('refresh').addEventListener('click', async event => {
   const btn = event.target;
   const originalText = btn.textContent;
-  
-  try{
+
+  try {
     btn.textContent = '↻ Refreshing...';
     btn.disabled = true;
-    
-    const r = await fetch('/refresh', {method:'POST'});
-    if(r.ok){ 
+
+    const r = await fetch('/refresh', { method: 'POST' });
+    if (r.ok) {
       await Promise.all([loadStatus(), loadChannels()]);
       btn.textContent = '✓ Refreshed!';
       setTimeout(() => {
@@ -207,7 +228,7 @@ byId('refresh').addEventListener('click', async (event)=>{
     } else {
       throw new Error(`HTTP ${r.status}`);
     }
-  }catch(e){ 
+  } catch (e) {
     console.warn('Refresh failed', e);
     showErrorMessage('Refresh failed - please try again');
     btn.textContent = originalText;
@@ -216,22 +237,22 @@ byId('refresh').addEventListener('click', async (event)=>{
 });
 
 // Load Xtreme Codes credentials
-async function loadCredentials(){
+async function loadCredentials() {
   const data = await fetchJSON('/credentials');
-  if(data){
+  if (data) {
     xtremeUser.textContent = data.username;
     xtremePass.textContent = data.password;
-    
+
     // Update direct URLs with credentials
-    if(data.direct_urls) {
+    if (data.direct_urls) {
       const xtremeM3uUrl = byId('xtreme-m3u-url');
       const xtremeXmlUrl = byId('xtreme-xml-url');
-      if(xtremeM3uUrl) xtremeM3uUrl.textContent = data.direct_urls.xtreme_m3u;
-      if(xtremeXmlUrl) xtremeXmlUrl.textContent = data.direct_urls.xtreme_xml;
+      if (xtremeM3uUrl) {xtremeM3uUrl.textContent = data.direct_urls.xtreme_m3u;}
+      if (xtremeXmlUrl) {xtremeXmlUrl.textContent = data.direct_urls.xtreme_xml;}
     }
-    
+
     // Show creation info if available
-    if(data.created_at) {
+    if (data.created_at) {
       const created = new Date(data.created_at).toLocaleDateString();
       const guideSummary = document.querySelector('.setup-guide summary');
       if (guideSummary) {
@@ -242,13 +263,13 @@ async function loadCredentials(){
 }
 
 // Load stream codes
-async function loadStreamCodes(){
+async function loadStreamCodes() {
   console.log('Loading stream codes...');
   const data = await fetchJSON('/stream-codes');
   console.log('Stream codes data:', data);
-  if (data?.stream_code_urls){
+  if (data?.stream_code_urls) {
     const container = byId('stream-codes-list');
-    if(container) {
+    if (container) {
       container.innerHTML = '';
       Object.entries(data.stream_code_urls).forEach(([code, url]) => {
         const div = document.createElement('div');
@@ -260,7 +281,7 @@ async function loadStreamCodes(){
         `;
         container.appendChild(div);
       });
-      
+
       // Add copy functionality to stream code URLs
       container.querySelectorAll('.copy-url').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -268,9 +289,13 @@ async function loadStreamCodes(){
           const ok = await copyTextToClipboard(url);
           const prev = btn.textContent;
           btn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
-          setTimeout(() => { btn.textContent = prev; }, 2000);
+          setTimeout(() => {
+            btn.textContent = prev;
+          }, 2000);
           if (!ok) {
-            showErrorMessage('Clipboard access blocked by browser. Text shown in prompt for manual copy.');
+            showErrorMessage(
+              'Clipboard access blocked by browser. Text shown in prompt for manual copy.',
+            );
           }
         });
       });
@@ -281,8 +306,12 @@ async function loadStreamCodes(){
 // Tab switching
 document.querySelectorAll('.tab-btn').forEach(btn => {
   btn.addEventListener('click', () => {
-    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(c => c.classList.add('hidden'));
+    document
+      .querySelectorAll('.tab-btn')
+      .forEach(b => b.classList.remove('active'));
+    document
+      .querySelectorAll('.tab-content')
+      .forEach(c => c.classList.add('hidden'));
     btn.classList.add('active');
     byId('tab-' + btn.dataset.tab).classList.remove('hidden');
   });
@@ -298,9 +327,13 @@ if (copyBtn) {
     const text = `Server: ${serverText}\nUsername: ${userText}\nPassword: ${passText}`;
     const ok = await copyTextToClipboard(text);
     copyBtn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
-    setTimeout(() => { copyBtn.textContent = '📋 Copy credentials'; }, 2000);
+    setTimeout(() => {
+      copyBtn.textContent = '📋 Copy credentials';
+    }, 2000);
     if (!ok) {
-      showErrorMessage('Clipboard access blocked by browser. Text shown in prompt for manual copy.');
+      showErrorMessage(
+        'Clipboard access blocked by browser. Text shown in prompt for manual copy.',
+      );
     }
   });
 }
@@ -312,7 +345,7 @@ loadStreamCodes();
 setInterval(loadStatus, 30000);
 
 // Generic inline copy buttons for URL codes
-document.querySelectorAll('.copy-inline').forEach((btn) => {
+document.querySelectorAll('.copy-inline').forEach(btn => {
   btn.addEventListener('click', async () => {
     const targetId = btn.getAttribute('data-target');
     const directText = btn.getAttribute('data-text');
@@ -323,13 +356,17 @@ document.querySelectorAll('.copy-inline').forEach((btn) => {
     } else if (el && el.textContent) {
       text = el.textContent;
     }
-    if (!text) return;
+    if (!text) {return;}
     const ok = await copyTextToClipboard(text);
     const prev = btn.textContent;
     btn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
-    setTimeout(() => { btn.textContent = prev; }, 2000);
+    setTimeout(() => {
+      btn.textContent = prev;
+    }, 2000);
     if (!ok) {
-      showErrorMessage('Clipboard access blocked by browser. Text shown in prompt for manual copy.');
+      showErrorMessage(
+        'Clipboard access blocked by browser. Text shown in prompt for manual copy.',
+      );
     }
   });
 });
@@ -337,7 +374,7 @@ document.querySelectorAll('.copy-inline').forEach((btn) => {
 // Logo overlay fallback: if local PNG missing, swap to remote reference image
 window.addEventListener('DOMContentLoaded', () => {
   const overlay = document.querySelector('.logo .logo-inc');
-  if (!overlay) return;
+  if (!overlay) {return;}
   const img = new Image();
   img.onload = () => {
     /* local asset exists, nothing to do */
