@@ -11,6 +11,7 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import (
     FileResponse,
     JSONResponse,
@@ -18,6 +19,31 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response as StarletteResponse
+from starlette.types import Scope, Receive, Send
+
+
+class CachedStaticFiles(StaticFiles):
+    """Static files with cache headers for better performance."""
+    
+    def file_response(self, *args, **kwargs) -> StarletteResponse:
+        response = super().file_response(*args, **kwargs)
+        
+        # Add cache headers for static assets
+        path = kwargs.get('path', '')
+        if hasattr(path, '__str__'):
+            path_str = str(path)
+            if path_str.endswith(('.svg', '.png', '.jpg', '.jpeg', '.ico')):
+                max_age = 86400  # 1 day for images
+            elif path_str.endswith(('.css', '.js')):
+                max_age = 3600   # 1 hour for CSS/JS (may change during development)
+            else:
+                max_age = 3600   # 1 hour default
+                
+            response.headers['Cache-Control'] = f'public, max-age={max_age}'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            
+        return response
 
 from .xtreme_codes import (
     _credential_manager,
@@ -110,6 +136,9 @@ else:
         allow_headers=["*"],
     )
 
+# Add compression middleware for better performance
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+
 # Mount Web UI
 WEB_DIR = Path(os.environ.get("WEB_DIR", "/web")).resolve()
 
@@ -129,7 +158,7 @@ def setup_web_routes():
     if (WEB_DIR / "assets").exists():
         app.mount(
             "/assets",
-            StaticFiles(directory=str(WEB_DIR / "assets")),
+            CachedStaticFiles(directory=str(WEB_DIR / "assets")),
             name="assets",
         )
 
@@ -137,7 +166,11 @@ def setup_web_routes():
     def web_index():
         """Serve the main web UI or API info."""
         if (WEB_DIR / "index.html").exists():
-            return FileResponse(str(WEB_DIR / "index.html"))
+            response = FileResponse(str(WEB_DIR / "index.html"))
+            # Add basic cache headers for HTML (shorter cache for dynamic content)
+            response.headers['Cache-Control'] = 'public, max-age=300'  # 5 minutes
+            response.headers['X-Content-Type-Options'] = 'nosniff'
+            return response
         return {"message": "Toonami Aftermath: Downlink API", "docs": "/docs"}
 
 
@@ -393,14 +426,34 @@ def _parse_extinf(line: str) -> tuple[str | None, str | None, str | None]:
         return None, None, None
 
 
+# Simple cache for channel data to avoid re-parsing M3U on every request
+_channel_cache = {
+    'data': None,
+    'timestamp': None,
+    'file_mtime': None
+}
+CACHE_TTL_SECONDS = 60  # Cache for 1 minute
+
+
 def parse_channels_from_m3u() -> list[dict[str, Any]]:
-    """Parse channel information from M3U file."""
-    channels: list[dict[str, Any]] = []
+    """Parse channel information from M3U file with caching."""
     if not M3U_PATH.exists():
         logger.warning("M3U file does not exist, returning empty channel list")
-        return channels
+        return []
 
     try:
+        # Check if we can use cached data
+        current_time = datetime.now(UTC).timestamp()
+        file_mtime = M3U_PATH.stat().st_mtime
+        
+        if (_channel_cache['data'] is not None and 
+            _channel_cache['timestamp'] is not None and
+            _channel_cache['file_mtime'] == file_mtime and
+            current_time - _channel_cache['timestamp'] < CACHE_TTL_SECONDS):
+            return _channel_cache['data']
+            
+        # Cache miss - parse the file
+        channels: list[dict[str, Any]] = []
         pending: dict[str, Any] | None = None
         content = M3U_PATH.read_text(errors="ignore")
 
@@ -429,6 +482,12 @@ def parse_channels_from_m3u() -> list[dict[str, Any]]:
         logger.error(f"Failed parsing M3U: {e}")
 
     logger.info(f"Parsed {len(channels)} channels from M3U")
+    
+    # Update cache
+    _channel_cache['data'] = channels
+    _channel_cache['timestamp'] = current_time
+    _channel_cache['file_mtime'] = file_mtime
+    
     return channels
 
 

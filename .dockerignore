@@ -26,3 +26,16 @@ docker-compose.yml
 .dockerignore
 Dockerfile
 data/
+
+# Additional development files
+test_*
+**/*.log
+npm-debug.log*
+.editorconfig
+.prettierrc
+.markdownlint.json
+eslint.config.js
+pyproject.toml
+package.json
+package-lock.json
+AUDIT.md

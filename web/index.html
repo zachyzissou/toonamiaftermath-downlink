@@ -3,16 +3,28 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Lightweight containerized application that fetches Toonami Aftermath channels and generates M3U and XMLTV files for IPTV players" />
+  <meta name="theme-color" content="#00e5ff" />
+  
   <title>Toonami Aftermath: Downlink</title>
+  
+  <!-- Optimized icon loading -->
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/assets/favicon.svg" />
+  
+  <!-- Preload critical resources -->
+  <link rel="preload" href="/assets/style.css" as="style" />
+  <link rel="preload" href="/assets/app.js" as="script" />
+  
+  <!-- Stylesheet with optimized loading -->
   <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
   <div class="wrap">
     <header>
   <div class="logo">
-  <img class="logo-base" src="/assets/logo.svg" alt="Downlink Logo" />
-  <img class="logo-inc" src="/assets/ta-ref.png" alt="Reference mark" />
+  <img class="logo-base" src="/assets/logo.svg" alt="Downlink Logo" width="64" height="64" />
+  <img class="logo-inc" src="/assets/ta-ref.png" alt="Reference mark" width="16" height="16" loading="lazy" />
   </div>
       <div class="title">
         <h1>Toonami Aftermath: Downlink</h1>
