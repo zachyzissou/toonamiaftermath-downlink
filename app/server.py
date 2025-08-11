@@ -7,6 +7,7 @@ import re
 import shutil
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+import sys
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -90,20 +91,6 @@ XML_PATH = DATA_DIR / "index.xml"
 STATE_PATH = DATA_DIR / "state.json"
 
 
-def validate_stream_code(stream_code: str) -> str:
-    """Validate and sanitize stream code input."""
-    if not stream_code:
-        raise HTTPException(status_code=400, detail="Stream code cannot be empty")
-
-    if len(stream_code) > MAX_STREAM_CODE_LENGTH:
-        raise HTTPException(status_code=400, detail="Stream code too long")
-
-    if not VALID_STREAM_CODE_PATTERN.match(stream_code):
-        raise HTTPException(status_code=400, detail="Invalid stream code format")
-
-    return stream_code
-
-
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
     """Validate credential inputs."""
     if not username or not password:
@@ -112,7 +99,7 @@ def validate_credentials(username: str, password: str) -> tuple[str, str]:
     if len(username) > 100 or len(password) > 500:
         raise HTTPException(status_code=400, detail="Credentials too long")
 
-    return username.strip(), password.strip()
+    return sanitize_user_input(username.strip()), password.strip()
 
 
 app = FastAPI(title="Toonami Aftermath: Downlink")
@@ -184,10 +171,31 @@ else:
         return {"message": "Toonami Aftermath: Downlink API", "docs": "/docs"}
 
 
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
-logger = logging.getLogger("downlink")
+# Structured logging configuration
+def setup_logging() -> logging.Logger:
+    """Setup structured logging with proper levels and formatting."""
+    log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
+    
+    # Simple format that doesn't require extra fields
+    log_format = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
+    
+    # Configure root logger
+    logging.basicConfig(
+        level=getattr(logging, log_level, logging.INFO),
+        format=log_format,
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+    
+    logger = logging.getLogger("downlink")
+    logger.setLevel(getattr(logging, log_level, logging.INFO))
+    
+    return logger
+
+
+# Initialize structured logging
+logger = setup_logging()
 
 
 def read_state() -> dict[str, Any]:
@@ -214,32 +222,7 @@ def write_state(state: dict[str, Any]) -> None:
 
 async def run_cmd(cmd: list[str], cwd: str | None = None) -> int:
     """Execute command asynchronously with proper error handling."""
-    logger.info("Executing: %s%s", " ".join(cmd), f" (cwd={cwd})" if cwd else "")
-
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=cwd,
-        )
-
-        if not proc.stdout:
-            logger.error("Failed to capture command output")
-            return -1
-
-        async for line in proc.stdout:
-            decoded_line = line.decode(errors="ignore").rstrip()
-            if decoded_line:  # Only log non-empty lines
-                logger.info(decoded_line)
-
-        return_code = await proc.wait()
-        logger.info(f"Command completed with return code: {return_code}")
-        return return_code
-
-    except Exception as e:
-        logger.error(f"Command execution failed: {e}")
-        return -1
+    return await run_cmd_with_timeout(cmd, cwd, NETWORK_TIMEOUT)
 
 
 def ensure_cli_exists() -> None:
@@ -294,10 +277,19 @@ async def generate_files() -> dict[str, Any]:
         logger.info(f"Attempt {attempt_num}/{len(attempts)}: {' '.join(cmd)}")
 
         try:
-            return_code = await run_cmd(cmd, cwd=cwd)
-            if return_code != 0:
-                logger.warning(f"CLI returned non-zero exit code: {return_code}")
-                continue
+            # Use retry mechanism for CLI execution
+            async def run_cli():
+                return_code = await run_cmd(cmd, cwd=cwd)
+                if return_code != 0:
+                    raise RuntimeError(f"CLI returned non-zero exit code: {return_code}")
+                return return_code
+                
+            await retry_operation(
+                run_cli,
+                max_retries=2,  # Fewer retries per command variant
+                delay=0.5,
+                operation_name=f"CLI execution: {cmd[0]}"
+            )
 
         except Exception as e:
             logger.warning("CLI execution failed for '%s': %s", " ".join(cmd), e)
@@ -426,6 +418,144 @@ def _parse_extinf(line: str) -> tuple[str | None, str | None, str | None]:
         return None, None, None
 
 
+# Error handling and retry configuration
+NETWORK_TIMEOUT = 30  # seconds
+MAX_RETRIES = 3
+RETRY_DELAY = 1  # seconds
+
+
+async def run_cmd_with_timeout(
+    cmd: list[str], cwd: str | None = None, timeout: int = NETWORK_TIMEOUT
+) -> int:
+    """Run command with timeout and proper error handling."""
+    try:
+        logger.info(f"Running command: {' '.join(cmd[:3])}... (timeout: {timeout}s)")
+        
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            cwd=cwd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+            
+            if proc.returncode != 0:
+                logger.warning(
+                    f"Command failed with code {proc.returncode}: {stderr.decode()[:200]}"
+                )
+            else:
+                logger.debug(f"Command succeeded: {stdout.decode()[:100]}")
+                
+            return proc.returncode
+            
+        except asyncio.TimeoutError:
+            logger.error(f"Command timed out after {timeout}s, terminating process")
+            proc.terminate()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except asyncio.TimeoutError:
+                logger.error("Force killing timed out process")
+                proc.kill()
+                await proc.wait()
+            raise RuntimeError(f"Command timed out after {timeout}s")
+            
+    except FileNotFoundError as e:
+        logger.error(f"Command not found: {cmd[0]} - {e}")
+        raise RuntimeError(f"Command not found: {cmd[0]}")
+    except Exception as e:
+        logger.error(f"Command execution failed: {e}")
+        raise RuntimeError(f"Command execution failed: {e}")
+
+
+async def retry_operation(
+    operation_func, 
+    max_retries: int = MAX_RETRIES, 
+    delay: float = RETRY_DELAY,
+    operation_name: str = "operation"
+):
+    """Retry an operation with exponential backoff."""
+    last_exception = None
+    
+    for attempt in range(max_retries):
+        try:
+            logger.debug(f"Attempting {operation_name} (attempt {attempt + 1}/{max_retries})")
+            return await operation_func()
+        except Exception as e:
+            last_exception = e
+            if attempt < max_retries - 1:
+                wait_time = delay * (2 ** attempt)  # Exponential backoff
+                logger.warning(
+                    f"{operation_name} failed (attempt {attempt + 1}), "
+                    f"retrying in {wait_time}s: {e}"
+                )
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"{operation_name} failed after {max_retries} attempts: {e}")
+    
+    raise last_exception
+
+
+# Enhanced input validation
+def validate_stream_code(stream_code: str) -> str:
+    """Validate and sanitize stream code input with comprehensive checks."""
+    if not stream_code:
+        raise HTTPException(status_code=400, detail="Stream code cannot be empty")
+    
+    # Length validation
+    if len(stream_code) > MAX_STREAM_CODE_LENGTH:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Stream code too long (max {MAX_STREAM_CODE_LENGTH} characters)"
+        )
+    
+    # Character validation - allow alphanumeric, hyphens, and underscores only
+    if not VALID_STREAM_CODE_PATTERN.match(stream_code):
+        raise HTTPException(
+            status_code=400, 
+            detail="Stream code contains invalid characters (only alphanumeric, hyphens, and underscores allowed)"
+        )
+    
+    # Additional security checks
+    if stream_code.lower() in ["admin", "root", "system", "config", "api", "test"]:
+        raise HTTPException(
+            status_code=400,
+            detail="Stream code contains reserved word"
+        )
+    
+    return stream_code.lower()  # Normalize to lowercase
+
+
+def validate_hostname(hostname: str) -> str:
+    """Validate hostname/IP for security."""
+    # Basic hostname validation
+    if not hostname or len(hostname) > 253:
+        raise HTTPException(status_code=400, detail="Invalid hostname")
+    
+    # Prevent localhost/internal network access in production
+    if hostname.lower() in ["localhost", "127.0.0.1", "::1"] and os.environ.get("ENV", "dev") == "prod":
+        raise HTTPException(status_code=400, detail="Localhost access not allowed")
+    
+    return hostname
+
+
+def sanitize_user_input(input_str: str, max_length: int = 100) -> str:
+    """Sanitize user input to prevent injection attacks."""
+    if not input_str:
+        return ""
+    
+    # Truncate and strip
+    sanitized = input_str.strip()[:max_length]
+    
+    # Remove potentially dangerous characters
+    dangerous_chars = ["<", ">", "&", "\"", "'", ";", "|", "&", "`"]
+    for char in dangerous_chars:
+        sanitized = sanitized.replace(char, "")
+    
+    return sanitized
+
+
 # Simple cache for channel data to avoid re-parsing M3U on every request
 _channel_cache = {
     'data': None,
@@ -489,6 +619,47 @@ def parse_channels_from_m3u() -> list[dict[str, Any]]:
     _channel_cache['file_mtime'] = file_mtime
     
     return channels
+
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for container orchestration and monitoring."""
+    try:
+        # Check basic functionality
+        health_status = {
+            "status": "healthy",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "checks": {
+                "api": "ok",
+                "data_dir": "ok" if DATA_DIR.exists() else "error",
+                "web_assets": "ok" if (WEB_DIR / "assets").exists() else "warning",
+                "cli_binary": "ok" if CLI_BIN.exists() else "error",
+                "memory": "ok",  # Could add actual memory check
+            }
+        }
+        
+        # Check if any critical services are down
+        critical_failures = [k for k, v in health_status["checks"].items() 
+                           if v == "error" and k in ["data_dir", "cli_binary"]]
+        
+        if critical_failures:
+            health_status["status"] = "unhealthy"
+            return JSONResponse(health_status, status_code=503)
+        
+        # Check for warnings
+        warnings = [k for k, v in health_status["checks"].items() if v == "warning"]
+        if warnings:
+            health_status["status"] = "degraded"
+        
+        return health_status
+        
+    except Exception as e:
+        logger.error(f"Health check failed: {e}")
+        return JSONResponse({
+            "status": "unhealthy",
+            "timestamp": datetime.now(UTC).isoformat(),
+            "error": str(e)
+        }, status_code=503)
 
 
 @app.get("/status")
