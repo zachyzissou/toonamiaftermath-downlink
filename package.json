@@ -15,7 +15,11 @@
     "format": "npm run format:python && npm run format:js",
     "format:python": "ruff check --fix . && black .",
     "format:js": "prettier --write web/assets/*.js",
-    "test": "python test_logic.py && python test_integration.py",
+    "test": "python test_logic.py && python test_integration.py && python test_frontend.py",
+    "test:unit": "python test_logic.py",
+    "test:integration": "python test_integration.py",
+    "test:frontend": "python test_frontend.py",
+    "test:all": "npm run test:unit && npm run test:integration && npm run test:frontend",
     "dev": "python run_dev.py"
   },
   "keywords": ["iptv", "toonami", "m3u", "xmltv", "docker"],

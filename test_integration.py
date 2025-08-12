@@ -64,7 +64,7 @@ def test_api_endpoints():
         ), f"M3U endpoint should return 404: {response.status_code}"
         print("✅ M3U endpoint properly returns 404 when no file exists")
 
-        # Test stream code validation
+        # Test stream code endpoint (should fail with 404 since no files generated)
         response = client.get("/m3u/stream-codes/test_code")
         assert (
             response.status_code == 404
@@ -77,6 +77,24 @@ def test_api_endpoints():
             response.status_code == 400
         ), f"Invalid stream code should return 400: {response.status_code}"
         print("✅ Stream code validation working")
+
+        # Test health endpoint
+        response = client.get("/health")
+        assert (
+            response.status_code in [200, 503]
+        ), f"Health endpoint failed: {response.status_code}"
+        health_data = response.json()
+        assert "status" in health_data
+        assert "timestamp" in health_data
+        assert "checks" in health_data
+        print("✅ Health endpoint working")
+
+        # Test stream codes endpoint
+        response = client.get("/stream-codes")
+        assert (
+            response.status_code == 200
+        ), f"Stream codes endpoint failed: {response.status_code}"
+        print("✅ Stream codes endpoint working")
 
 
 def test_xtreme_codes_api():
