@@ -11,6 +11,104 @@ const xtremeUrl = byId('xtreme-url');
 const xtremeUser = byId('xtreme-user');
 const xtremePass = byId('xtreme-pass');
 
+// Accessibility improvements
+function announceToScreenReader(message) {
+  const announcement = document.createElement('div');
+  announcement.setAttribute('aria-live', 'polite');
+  announcement.setAttribute('aria-atomic', 'true');
+  announcement.className = 'sr-only';
+  announcement.textContent = message;
+  document.body.appendChild(announcement);
+
+  // Remove after announcement
+  setTimeout(() => {
+    document.body.removeChild(announcement);
+  }, 1000);
+}
+
+function setLoadingState(element, isLoading = true) {
+  if (!element) {return;}
+
+  if (isLoading) {
+    element.setAttribute('aria-busy', 'true');
+    element.classList.add('loading');
+  } else {
+    element.removeAttribute('aria-busy');
+    element.classList.remove('loading');
+  }
+}
+
+function showNotification(message, type = 'info') {
+  const notification = document.createElement('div');
+  notification.setAttribute('role', 'alert');
+  notification.setAttribute('aria-live', 'assertive');
+  notification.className = `notification notification-${type}`;
+  notification.textContent = message;
+
+  const styles = {
+    position: 'fixed',
+    top: '20px',
+    right: '20px',
+    padding: '12px 16px',
+    borderRadius: '8px',
+    color: 'white',
+    fontSize: '14px',
+    zIndex: '1000',
+    maxWidth: '300px',
+    wordWrap: 'break-word',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+    opacity: '0',
+    transform: 'translateY(-10px)',
+    transition: 'all 0.3s ease',
+  };
+
+  Object.assign(notification.style, styles);
+
+  switch (type) {
+  case 'success':
+    notification.style.background = 'linear-gradient(135deg, #71ffa0, #4ecdc4)';
+    break;
+  case 'error':
+    notification.style.background = 'linear-gradient(135deg, #ff6b6b, #ee5a52)';
+    break;
+  case 'warning':
+    notification.style.background = 'linear-gradient(135deg, #ffb870, #f39c12)';
+    break;
+  default:
+    notification.style.background = 'linear-gradient(135deg, #00e5ff, #21ffa1)';
+  }
+
+  document.body.appendChild(notification);
+
+  // Animate in
+  requestAnimationFrame(() => {
+    notification.style.opacity = '1';
+    notification.style.transform = 'translateY(0)';
+  });
+
+  // Auto remove after 5 seconds
+  setTimeout(() => {
+    notification.style.opacity = '0';
+    notification.style.transform = 'translateY(-10px)';
+    setTimeout(() => {
+      if (notification.parentNode) {
+        document.body.removeChild(notification);
+      }
+    }, 300);
+  }, 5000);
+
+  // Allow manual dismiss on click
+  notification.addEventListener('click', () => {
+    notification.style.opacity = '0';
+    notification.style.transform = 'translateY(-10px)';
+    setTimeout(() => {
+      if (notification.parentNode) {
+        document.body.removeChild(notification);
+      }
+    }, 300);
+  });
+}
+
 // Robust clipboard helper: tries navigator.clipboard in secure contexts,
 // falls back to a hidden textarea + execCommand('copy') for HTTP or older browsers.
 async function copyTextToClipboard(text) {
@@ -18,6 +116,8 @@ async function copyTextToClipboard(text) {
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
+      showNotification('Copied to clipboard!', 'success');
+      announceToScreenReader('Text copied to clipboard');
       return true;
     }
   } catch (e) {
@@ -30,6 +130,7 @@ async function copyTextToClipboard(text) {
   ta.style.position = 'fixed';
   ta.style.top = '-1000px';
   ta.style.left = '-1000px';
+  ta.setAttribute('aria-hidden', 'true');
   document.body.appendChild(ta);
   ta.focus();
   ta.select();
@@ -50,10 +151,18 @@ async function copyTextToClipboard(text) {
     // As a last resort, show a prompt so users can copy manually
     try {
       window.prompt('Copy to clipboard: Ctrl+C, Enter', text);
+      ok = true;
     } catch {
-      // Ignore prompt errors
+      showNotification('Copy failed - please copy manually', 'error');
+      return false;
     }
   }
+
+  if (ok) {
+    showNotification('Copied to clipboard!', 'success');
+    announceToScreenReader('Text copied to clipboard');
+  }
+
   return ok;
 }
 
@@ -79,50 +188,21 @@ async function fetchJSON(path) {
     return await r.json();
   } catch (e) {
     console.warn('Fetch failed', path, e);
-    showErrorMessage(`Failed to load ${path}`);
+    showNotification(`Failed to load ${path.replace(/^\//, '')}`, 'error');
     return null;
   }
 }
 
-function showErrorMessage(message) {
-  // Create or update error banner
-  let banner = document.getElementById('error-banner');
-  if (!banner) {
-    banner = document.createElement('div');
-    banner.id = 'error-banner';
-    banner.style.cssText = `
-      position: fixed; top: 10px; right: 10px; 
-      background: linear-gradient(135deg, #ff6b6b, #ee5a52);
-      color: white; padding: 12px 16px; border-radius: 8px;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3); z-index: 1000;
-      max-width: 300px; font-size: 14px; opacity: 0;
-      transition: opacity 0.3s ease;
-    `;
-    document.body.appendChild(banner);
-  }
-
-  banner.textContent = message;
-  banner.style.opacity = '1';
-
-  // Auto-hide after 5 seconds
-  setTimeout(() => {
-    if (banner) {banner.style.opacity = '0';}
-  }, 5000);
-}
-
-function hideErrorMessage() {
-  const banner = document.getElementById('error-banner');
-  if (banner) {banner.style.opacity = '0';}
-}
+// Remove old error handling code that was left behind
+// The new showNotification function handles all error display
 
 function setOnline(isOnline) {
   statusDot.classList.toggle('offline', !isOnline);
   statusText.textContent = isOnline ? 'Online' : 'Offline';
 
-  if (isOnline) {
-    hideErrorMessage();
-  } else {
-    showErrorMessage('Server is offline or unreachable');
+  if (!isOnline) {
+    showNotification('Server is offline or unreachable', 'error');
+    announceToScreenReader('Server connection lost');
   }
 }
 
@@ -137,6 +217,7 @@ function formatDate(ts) {
 }
 
 async function loadStatus() {
+  setLoadingState(quickStats, true);
   try {
     const data = await fetchJSON('/status');
     if (!data) {
@@ -158,13 +239,18 @@ async function loadStatus() {
         <div>CLI version: <code>${data.cli_version ?? '—'}</code></div>
         <div>Stream endpoints: <code>${streamEndpoints}</code></div>
       </div>`;
+
+    announceToScreenReader(`Status updated. ${data.channel_count || 0} channels available.`);
   } catch (error) {
     console.error('Status load failed:', error);
     setOnline(false);
+  } finally {
+    setLoadingState(quickStats, false);
   }
 }
 
 async function loadChannels() {
+  setLoadingState(channelsEl, true);
   try {
     const list = await fetchJSON('/channels');
     if (!list) {
@@ -183,6 +269,7 @@ async function loadChannels() {
     list.forEach(c => {
       const row = document.createElement('div');
       row.className = 'row';
+      row.setAttribute('role', 'listitem');
       // Escape HTML to prevent XSS
       const safeName = (c.name || '').replace(/[<>&"]/g, match => {
         const entities = {
@@ -200,124 +287,229 @@ async function loadChannels() {
       channelsEl.appendChild(row);
     });
 
+    announceToScreenReader(`${list.length} channels loaded`);
     console.log(`Loaded ${list.length} channels`);
   } catch (error) {
     console.error('Channel load failed:', error);
     channelsEl.innerHTML =
       '<div class="row"><div class="ch">—</div><div class="name">Error loading channels</div><div></div></div>';
+  } finally {
+    setLoadingState(channelsEl, false);
   }
 }
 
-// Enhanced refresh with user feedback
+// Enhanced refresh with user feedback and accessibility
 byId('refresh').addEventListener('click', async event => {
   const btn = event.target;
   const originalText = btn.textContent;
 
   try {
-    btn.textContent = '↻ Refreshing...';
+    btn.innerHTML = '<span aria-hidden="true">↻</span> Refreshing...';
     btn.disabled = true;
+    btn.setAttribute('aria-busy', 'true');
+    setLoadingState(btn, true);
 
     const r = await fetch('/refresh', { method: 'POST' });
     if (r.ok) {
       await Promise.all([loadStatus(), loadChannels()]);
-      btn.textContent = '✓ Refreshed!';
+      btn.innerHTML = '<span aria-hidden="true">✓</span> Refreshed!';
+      announceToScreenReader('Data refreshed successfully');
       setTimeout(() => {
-        btn.textContent = originalText;
+        btn.innerHTML = originalText;
         btn.disabled = false;
+        btn.removeAttribute('aria-busy');
+        setLoadingState(btn, false);
       }, 2000);
     } else {
       throw new Error(`HTTP ${r.status}`);
     }
   } catch (e) {
     console.warn('Refresh failed', e);
-    showErrorMessage('Refresh failed - please try again');
-    btn.textContent = originalText;
+    showNotification('Refresh failed - please try again', 'error');
+    btn.innerHTML = originalText;
     btn.disabled = false;
+    btn.removeAttribute('aria-busy');
+    setLoadingState(btn, false);
   }
 });
 
-// Load Xtreme Codes credentials
+// Load Xtreme Codes credentials with loading states
 async function loadCredentials() {
-  const data = await fetchJSON('/credentials');
-  if (data) {
-    xtremeUser.textContent = data.username;
-    xtremePass.textContent = data.password;
+  setLoadingState(xtremeUser, true);
+  setLoadingState(xtremePass, true);
 
-    // Update direct URLs with credentials
-    if (data.direct_urls) {
-      const xtremeM3uUrl = byId('xtreme-m3u-url');
-      const xtremeXmlUrl = byId('xtreme-xml-url');
-      if (xtremeM3uUrl) {xtremeM3uUrl.textContent = data.direct_urls.xtreme_m3u;}
-      if (xtremeXmlUrl) {xtremeXmlUrl.textContent = data.direct_urls.xtreme_xml;}
-    }
+  try {
+    const data = await fetchJSON('/credentials');
+    if (data) {
+      // Remove loading indicators and set actual content
+      const userLoadingSpan = xtremeUser.querySelector('.loading-indicator');
+      const passLoadingSpan = xtremePass.querySelector('.loading-indicator');
 
-    // Show creation info if available
-    if (data.created_at) {
-      const created = new Date(data.created_at).toLocaleDateString();
-      const guideSummary = document.querySelector('.setup-guide summary');
-      if (guideSummary) {
-        guideSummary.textContent = `Popular IPTV Player Setup (Generated: ${created})`;
+      if (userLoadingSpan) {userLoadingSpan.remove();}
+      if (passLoadingSpan) {passLoadingSpan.remove();}
+
+      xtremeUser.textContent = data.username;
+      xtremePass.textContent = data.password;
+
+      // Update direct URLs with credentials
+      if (data.direct_urls) {
+        const xtremeM3uUrl = byId('xtreme-m3u-url');
+        const xtremeXmlUrl = byId('xtreme-xml-url');
+        if (xtremeM3uUrl) {xtremeM3uUrl.textContent = data.direct_urls.xtreme_m3u;}
+        if (xtremeXmlUrl) {xtremeXmlUrl.textContent = data.direct_urls.xtreme_xml;}
       }
+
+      // Show creation info if available
+      if (data.created_at) {
+        const created = new Date(data.created_at).toLocaleDateString();
+        const guideSummary = document.querySelector('.setup-guide summary');
+        if (guideSummary) {
+          guideSummary.textContent = `Popular IPTV Player Setup (Generated: ${created})`;
+        }
+      }
+
+      announceToScreenReader('Credentials loaded successfully');
     }
+  } catch (error) {
+    console.error('Failed to load credentials:', error);
+    xtremeUser.textContent = 'Error loading';
+    xtremePass.textContent = 'Error loading';
+  } finally {
+    setLoadingState(xtremeUser, false);
+    setLoadingState(xtremePass, false);
   }
 }
 
-// Load stream codes
+// Load stream codes with improved loading states
 async function loadStreamCodes() {
   console.log('Loading stream codes...');
-  const data = await fetchJSON('/stream-codes');
-  console.log('Stream codes data:', data);
-  if (data?.stream_code_urls) {
-    const container = byId('stream-codes-list');
-    if (container) {
-      container.innerHTML = '';
-      Object.entries(data.stream_code_urls).forEach(([code, url]) => {
-        const div = document.createElement('div');
-        div.className = 'url-item';
-        div.innerHTML = `
-          <label>${code.toUpperCase()}:</label>
-          <code class="url-display">${url}</code>
-          <button type="button" class="btn-sm copy-url" data-url="${url}">📋 Copy</button>
-        `;
-        container.appendChild(div);
-      });
+  const container = byId('stream-codes-list');
 
-      // Add copy functionality to stream code URLs
-      container.querySelectorAll('.copy-url').forEach(btn => {
-        btn.addEventListener('click', async () => {
-          const url = btn.dataset.url || '';
-          const ok = await copyTextToClipboard(url);
-          const prev = btn.textContent;
-          btn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
-          setTimeout(() => {
-            btn.textContent = prev;
-          }, 2000);
-          if (!ok) {
-            showErrorMessage(
-              'Clipboard access blocked by browser. Text shown in prompt for manual copy.',
-            );
-          }
+  if (container) {
+    setLoadingState(container, true);
+
+    try {
+      const data = await fetchJSON('/stream-codes');
+      console.log('Stream codes data:', data);
+
+      if (data?.stream_code_urls) {
+        container.innerHTML = '';
+
+        Object.entries(data.stream_code_urls).forEach(([code, url]) => {
+          const div = document.createElement('div');
+          div.className = 'url-item';
+          div.innerHTML = `
+            <label>${code.toUpperCase()}:</label>
+            <code class="url-display" aria-label="Stream URL for ${code}">${url}</code>
+            <button type="button" class="btn-sm copy-url" data-url="${url}" aria-label="Copy ${code} URL">
+              <span aria-hidden="true">📋</span> Copy
+            </button>
+          `;
+          container.appendChild(div);
         });
-      });
+
+        // Add copy functionality to stream code URLs
+        container.querySelectorAll('.copy-url').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            const url = btn.dataset.url || '';
+            const ok = await copyTextToClipboard(url);
+            const prev = btn.innerHTML;
+            btn.innerHTML = ok ? '<span aria-hidden="true">✓</span> Copied!' : '<span aria-hidden="true">⌗</span> Select+Copy';
+            setTimeout(() => {
+              btn.innerHTML = prev;
+            }, 2000);
+            if (!ok) {
+              showNotification(
+                'Clipboard access blocked by browser. Text shown in prompt for manual copy.',
+                'error',
+              );
+            }
+          });
+        });
+
+        announceToScreenReader(`${Object.keys(data.stream_code_urls).length} stream codes loaded`);
+      } else {
+        container.innerHTML = '<div class="url-item"><span class="url-label">No stream codes available</span></div>';
+      }
+    } catch (error) {
+      console.error('Failed to load stream codes:', error);
+      container.innerHTML = '<div class="url-item"><span class="url-label">Error loading stream codes</span></div>';
+    } finally {
+      setLoadingState(container, false);
     }
   }
 }
 
-// Tab switching
-document.querySelectorAll('.tab-btn').forEach(btn => {
+// Enhanced tab switching with keyboard navigation and ARIA support
+function switchTab(activeBtn) {
+  // Update tab buttons
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.classList.remove('active');
+    btn.setAttribute('aria-selected', 'false');
+    btn.setAttribute('tabindex', '-1');
+  });
+
+  // Update tab content
+  document.querySelectorAll('.tab-content').forEach(content => {
+    content.classList.add('hidden');
+  });
+
+  // Activate selected tab
+  activeBtn.classList.add('active');
+  activeBtn.setAttribute('aria-selected', 'true');
+  activeBtn.setAttribute('tabindex', '0');
+
+  const targetTab = byId('tab-' + activeBtn.dataset.tab);
+  if (targetTab) {
+    targetTab.classList.remove('hidden');
+  }
+
+  announceToScreenReader(`Switched to ${activeBtn.textContent} tab`);
+}
+
+document.querySelectorAll('.tab-btn').forEach((btn, index) => {
   btn.addEventListener('click', () => {
-    document
-      .querySelectorAll('.tab-btn')
-      .forEach(b => b.classList.remove('active'));
-    document
-      .querySelectorAll('.tab-content')
-      .forEach(c => c.classList.add('hidden'));
-    btn.classList.add('active');
-    byId('tab-' + btn.dataset.tab).classList.remove('hidden');
+    switchTab(btn);
+  });
+
+  btn.addEventListener('keydown', (e) => {
+    const tabs = Array.from(document.querySelectorAll('.tab-btn'));
+    let newIndex = index;
+
+    switch (e.key) {
+    case 'ArrowLeft':
+    case 'ArrowUp':
+      e.preventDefault();
+      newIndex = index > 0 ? index - 1 : tabs.length - 1;
+      break;
+    case 'ArrowRight':
+    case 'ArrowDown':
+      e.preventDefault();
+      newIndex = index < tabs.length - 1 ? index + 1 : 0;
+      break;
+    case 'Home':
+      e.preventDefault();
+      newIndex = 0;
+      break;
+    case 'End':
+      e.preventDefault();
+      newIndex = tabs.length - 1;
+      break;
+    case 'Enter':
+    case ' ':
+      e.preventDefault();
+      switchTab(btn);
+      return;
+    }
+
+    if (newIndex !== index) {
+      tabs[newIndex].focus();
+      switchTab(tabs[newIndex]);
+    }
   });
 });
 
-// Copy credentials button
+// Copy credentials button with improved accessibility
 const copyBtn = byId('copy-xtreme');
 if (copyBtn) {
   copyBtn.addEventListener('click', async () => {
@@ -326,13 +518,15 @@ if (copyBtn) {
     const passText = xtremePass ? xtremePass.textContent : '';
     const text = `Server: ${serverText}\nUsername: ${userText}\nPassword: ${passText}`;
     const ok = await copyTextToClipboard(text);
-    copyBtn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
+    const prevHtml = copyBtn.innerHTML;
+    copyBtn.innerHTML = ok ? '<span aria-hidden="true">✓</span> Copied!' : '<span aria-hidden="true">⌗</span> Select+Copy';
     setTimeout(() => {
-      copyBtn.textContent = '📋 Copy credentials';
+      copyBtn.innerHTML = prevHtml;
     }, 2000);
     if (!ok) {
-      showErrorMessage(
+      showNotification(
         'Clipboard access blocked by browser. Text shown in prompt for manual copy.',
+        'error',
       );
     }
   });
@@ -344,7 +538,7 @@ loadCredentials();
 loadStreamCodes();
 setInterval(loadStatus, 30000);
 
-// Generic inline copy buttons for URL codes
+// Generic inline copy buttons for URL codes with improved accessibility
 document.querySelectorAll('.copy-inline').forEach(btn => {
   btn.addEventListener('click', async () => {
     const targetId = btn.getAttribute('data-target');
@@ -358,14 +552,15 @@ document.querySelectorAll('.copy-inline').forEach(btn => {
     }
     if (!text) {return;}
     const ok = await copyTextToClipboard(text);
-    const prev = btn.textContent;
-    btn.textContent = ok ? '✓ Copied!' : '⌗ Select+Copy';
+    const prev = btn.innerHTML;
+    btn.innerHTML = ok ? '<span aria-hidden="true">✓</span> Copied!' : '<span aria-hidden="true">⌗</span> Select+Copy';
     setTimeout(() => {
-      btn.textContent = prev;
+      btn.innerHTML = prev;
     }, 2000);
     if (!ok) {
-      showErrorMessage(
+      showNotification(
         'Clipboard access blocked by browser. Text shown in prompt for manual copy.',
+        'error',
       );
     }
   });

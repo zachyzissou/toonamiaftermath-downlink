@@ -18,6 +18,7 @@ export default [
         clearTimeout: 'readonly',
         clearInterval: 'readonly',
         Image: 'readonly',
+        requestAnimationFrame: 'readonly',
       },
     },
     rules: {
@@ -26,7 +27,7 @@ export default [
       'quotes': ['error', 'single'],
       'semi': ['error', 'always'],
       'no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
-      'no-console': 'warn',
+      'no-console': 'off', // Allow console statements in frontend for debugging
       'eqeqeq': 'error',
       'curly': 'error',
       'no-var': 'error',
