@@ -38,22 +38,51 @@ class CredentialManager:
         """Initialize credential manager with temporary secret storage."""
         self._current_password: str | None = None
         self._current_recovery_code: str | None = None
+        self._cached_credentials: dict[str, Any] | None = None
         self._lock = threading.Lock()
 
     def get_stored_credentials(self) -> dict[str, Any]:
         """Get credentials from storage (without plaintext password)."""
+        with self._lock:
+            if self._cached_credentials is not None and not CREDENTIALS_FILE.exists():
+                return dict(self._cached_credentials)
         if not CREDENTIALS_FILE.exists():
+            if self._cached_credentials is not None:
+                with self._lock:
+                    return dict(self._cached_credentials)
             return {}
 
         try:
             with CREDENTIALS_FILE.open("r", encoding="utf-8") as f:
                 loaded = json.load(f)
-        except json.JSONDecodeError as exc:
+        except json.JSONDecodeError:
             logger.error("Invalid credentials file format in %s", CREDENTIALS_FILE)
-            raise CredentialStorageError("credentials.json has invalid format") from exc
+            if _recover_unreadable_credentials_file():
+                return {}
+            if self._cached_credentials is not None:
+                logger.warning(
+                    "Using cached credentials because %s could not be read as JSON",
+                    CREDENTIALS_FILE,
+                )
+                return dict(self._cached_credentials)
+            logger.warning(
+                "No cached credentials available; generating a new credential set instead."
+            )
+            return {}
         except OSError as exc:
             if exc.errno == errno.EACCES and _recover_unreadable_credentials_file():
                 return {}
+            if exc.errno == errno.EACCES and self._cached_credentials is None:
+                logger.warning(
+                    "No cached credentials available; generating a new credential set instead."
+                )
+                return {}
+            if self._cached_credentials is not None:
+                logger.warning(
+                    "Using cached credentials because %s is unreadable",
+                    CREDENTIALS_FILE,
+                )
+                return dict(self._cached_credentials)
             logger.error("Failed reading credentials file %s: %s", CREDENTIALS_FILE, exc)
             raise CredentialStorageError(
                 "credentials.json is unreadable or invalid; manual recovery required"
@@ -63,7 +92,19 @@ class CredentialManager:
             logger.error("Invalid credentials file format in %s", CREDENTIALS_FILE)
             raise CredentialStorageError("credentials.json must contain a JSON object")
 
+        with self._lock:
+            self._cached_credentials = dict(loaded)
         return loaded
+
+    def clear_cached_credentials(self) -> None:
+        """Clear cached credential record."""
+        with self._lock:
+            self._cached_credentials = None
+
+    def cache_stored_credentials(self, creds: dict[str, Any]) -> None:
+        """Cache credentials for in-memory fallback."""
+        with self._lock:
+            self._cached_credentials = dict(creds)
 
     def get_password_for_display(self) -> str | None:
         """Get password for one-time display in UI."""
@@ -144,6 +185,20 @@ def _recover_unreadable_credentials_file() -> bool:
         return False
 
 
+def _try_write_credentials(stored_creds: dict[str, Any]) -> bool:
+    """Attempt to persist credentials and return whether it succeeded."""
+    try:
+        _save_stored_credentials(stored_creds)
+        return True
+    except OSError as exc:
+        logger.warning(
+            "Persisting credentials to %s failed; continuing with in-memory credentials only: %s",
+            CREDENTIALS_FILE,
+            exc,
+        )
+        return False
+
+
 def _save_stored_credentials(stored_creds: dict[str, Any]) -> None:
     """Persist credentials safely to disk."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -175,13 +230,20 @@ def _save_stored_credentials(stored_creds: dict[str, Any]) -> None:
 def _write_recovery_code_file(recovery_code: str) -> None:
     """Write recovery code to a local recovery file for operator recovery."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    RECOVERY_FILE.write_text(
-        f"{recovery_code}\n"
-        "Use this recovery code with POST /credentials/rotate to rotate credentials.\n"
-    )
-    with suppress(Exception):
-        # Best effort across platforms/filesystems.
-        RECOVERY_FILE.chmod(0o600)
+    try:
+        RECOVERY_FILE.write_text(
+            f"{recovery_code}\n"
+            "Use this recovery code with POST /credentials/rotate to rotate credentials.\n"
+        )
+        with suppress(Exception):
+            # Best effort across platforms/filesystems.
+            RECOVERY_FILE.chmod(0o600)
+    except OSError as exc:
+        logger.warning(
+            "Could not write recovery file %s (continuing without persistent recovery file): %s",
+            RECOVERY_FILE,
+            exc,
+        )
 
 
 def generate_credentials() -> dict[str, str]:
@@ -265,7 +327,11 @@ def _normalize_stored_credentials(
         changed = True
 
     if changed:
-        _save_stored_credentials(updated)
+        if _try_write_credentials(updated):
+            with suppress(Exception):
+                _credential_manager.cache_stored_credentials(updated)
+        else:
+            _credential_manager.cache_stored_credentials(updated)
 
     return updated, recovery_code_for_display
 
@@ -278,6 +344,7 @@ def load_or_create_credentials() -> dict[str, Any]:
         Dict containing credential information (password/recovery only for one-time display)
     """
     stored_creds = _credential_manager.get_stored_credentials()
+    _credential_manager.cache_stored_credentials(stored_creds)
 
     if stored_creds and all(
         k in stored_creds for k in ["username", "password_hash", "created_at"]
@@ -306,7 +373,16 @@ def load_or_create_credentials() -> dict[str, Any]:
         "installation_id": secrets.token_hex(8),
     }
 
-    _save_stored_credentials(stored_creds)
+    if _try_write_credentials(stored_creds):
+        with suppress(Exception):
+            _credential_manager.cache_stored_credentials(stored_creds)
+    else:
+        logger.warning(
+            "Credentials could not be written to %s; using temporary credentials for this container session.",
+            CREDENTIALS_FILE,
+        )
+        _credential_manager.cache_stored_credentials(stored_creds)
+
     _write_recovery_code_file(recovery_code)
 
     print(f"Generated credentials - Username: {stored_creds['username']}")
@@ -351,7 +427,7 @@ def _upgrade_legacy_password_hash(stored_creds: dict[str, Any], password: str) -
     stored_creds["password_salt"] = password_salt
     stored_creds["pbkdf2_iterations"] = PBKDF2_ITERATIONS
     stored_creds["hash_algorithm"] = "pbkdf2_sha256"
-    _save_stored_credentials(stored_creds)
+    _try_write_credentials(stored_creds)
 
 
 def verify_credentials(username: str, password: str) -> bool:
@@ -417,7 +493,14 @@ def rotate_credentials(new_password: str | None = None) -> dict[str, Any]:
         "stream_token": secrets.token_urlsafe(STREAM_TOKEN_BYTES),
     }
 
-    _save_stored_credentials(rotated)
+    if _try_write_credentials(rotated):
+        _credential_manager.cache_stored_credentials(rotated)
+    else:
+        _credential_manager.cache_stored_credentials(rotated)
+        logger.warning(
+            "Credential rotation update is not persisted to disk at %s and will be lost on restart.",
+            CREDENTIALS_FILE,
+        )
     _write_recovery_code_file(recovery_code)
 
     _credential_manager.cache_plaintext_secrets(password=password, recovery_code=recovery_code)
