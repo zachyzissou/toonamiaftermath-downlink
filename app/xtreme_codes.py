@@ -20,6 +20,7 @@ SALT_LENGTH = 32
 PASSWORD_MIN_LENGTH = 8
 PBKDF2_ITERATIONS = 100_000
 MAX_PBKDF2_ITERATIONS = 1_000_000
+STREAM_TOKEN_BYTES = 24
 
 logger = logging.getLogger(__name__)
 
@@ -197,7 +198,7 @@ def _is_pbkdf2_record(stored_creds: dict[str, Any]) -> bool:
 
 
 def _normalize_stored_credentials(
-    stored_creds: dict[str, Any]
+    stored_creds: dict[str, Any],
 ) -> tuple[dict[str, Any], str | None]:
     """Ensure required metadata exists; return possibly updated record and optional new recovery code."""
     updated = dict(stored_creds)
@@ -212,6 +213,10 @@ def _normalize_stored_credentials(
         recovery_code_for_display = generate_recovery_code()
         updated["recovery_code_hash"] = hash_recovery_code(recovery_code_for_display)
         _write_recovery_code_file(recovery_code_for_display)
+        changed = True
+
+    if "stream_token" not in updated:
+        updated["stream_token"] = secrets.token_urlsafe(STREAM_TOKEN_BYTES)
         changed = True
 
     if changed:
@@ -364,6 +369,7 @@ def rotate_credentials(new_password: str | None = None) -> dict[str, Any]:
         "recovery_code_hash": hash_recovery_code(recovery_code),
         "created_at": datetime.now(UTC).isoformat(),
         "installation_id": stored_creds.get("installation_id") or secrets.token_hex(8),
+        "stream_token": secrets.token_urlsafe(STREAM_TOKEN_BYTES),
     }
 
     _save_stored_credentials(rotated)
@@ -472,7 +478,7 @@ def generate_short_epg(channels: list[dict[str, Any]]) -> str:
 
 
 def format_xtreme_m3u(
-    channels: list[dict[str, Any]], host: str, username: str, password: str
+    channels: list[dict[str, Any]], host: str, username: str, stream_token: str
 ) -> str:
     """
     Format M3U for Xtreme Codes API format.
@@ -481,7 +487,7 @@ def format_xtreme_m3u(
         channels: List of channel dictionaries
         host: Server hostname
         username: Xtreme Codes username
-        password: Xtreme Codes password
+        stream_token: Xtreme stream access token
 
     Returns:
         M3U formatted string
@@ -493,7 +499,7 @@ def format_xtreme_m3u(
         ch_num = channel.get("number", "")
         ch_name = channel.get("name", "")
 
-        stream_url = f"http://{host}/live/{username}/{password}/{ch_id}.ts"
+        stream_url = f"http://{host}/live/{username}/{stream_token}/{ch_id}.ts"
 
         extinf = (
             f'#EXTINF:-1 tvg-id="{ch_id}" tvg-name="{ch_name}" '
