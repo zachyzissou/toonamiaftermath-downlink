@@ -73,6 +73,7 @@ CLI_BIN: Path = Path(os.environ.get("CLI_BIN", "/usr/local/bin/toonamiaftermath-
 # Security constants
 MAX_STREAM_CODE_LENGTH = 50
 VALID_STREAM_CODE_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+$")
+APP_ENV = os.environ.get("ENV", "prod").strip().lower()
 ALLOWED_ORIGINS = (
     os.environ.get("ALLOWED_ORIGINS", "").split(",")
     if os.environ.get("ALLOWED_ORIGINS")
@@ -152,10 +153,10 @@ if ALLOWED_ORIGINS:
         allow_headers=["*"],
     )
 else:
-    # Development mode - allow localhost origins only
+    # Development mode - allow localhost origins only if explicitly allowed
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:*", "http://127.0.0.1:*"],
+        allow_origins=["http://localhost", "http://127.0.0.1", "http://localhost:3000", "http://127.0.0.1:3000"] if APP_ENV in {"dev", "development", "local"} else [],
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
