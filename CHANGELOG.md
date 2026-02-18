@@ -8,7 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Fixed
-- **Critical: Container healthcheck crash** - Added `wget` package to runtime stage of Dockerfile. The HEALTHCHECK directive was failing because `wget` was only installed in the build stage, causing containers to be marked as unhealthy and potentially crash in orchestration systems.
+- **Critical: Container healthcheck failure** - Added `wget` package to runtime stage of Dockerfile. The HEALTHCHECK directive was failing because `wget` was only installed in the build stage, causing containers to be marked as unhealthy and potentially restarted or replaced by orchestration systems.
 
 ## [2.0.0] - 2026-02-18 - Comprehensive Refinement Release
 
