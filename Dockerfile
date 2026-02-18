@@ -17,7 +17,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PORT=7004 \
     CRON_SCHEDULE="0 3 * * *"
 
-RUN apk add --no-cache bash ca-certificates gcompat libc6-compat libstdc++ tzdata
+RUN apk add --no-cache bash ca-certificates gcompat libc6-compat libstdc++ tzdata wget
 RUN addgroup -S app && adduser -S app -G app -h /home/app
 
 WORKDIR /app

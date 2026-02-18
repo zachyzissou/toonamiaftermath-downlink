@@ -40,6 +40,23 @@ This guide helps you diagnose and resolve common issues with Toonami Aftermath D
    docker build --no-cache -t toonami-downlink .
    ```
 
+4. **Container marked as unhealthy**
+   ```bash
+   # Check container health status
+   docker ps
+   docker inspect <container_name> | grep -A 10 Health
+   
+   # View health check logs (raw JSON, works without jq)
+   docker inspect <container_name> --format='{{json .State.Health}}'
+   
+   # Optional: pretty-print with jq (install with your package manager, e.g. `sudo apt-get install jq`)
+   # docker inspect <container_name> --format='{{json .State.Health}}' | jq
+   
+   # This issue is fixed in the latest version. If you're experiencing this,
+   # ensure you're using the latest image:
+   docker pull ghcr.io/zachyzissou/toonamiaftermath-downlink:latest
+   ```
+
 ### No Channels Loading
 
 **Symptoms**: Channel list shows "Loading..." or "No channels available"

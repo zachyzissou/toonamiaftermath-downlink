@@ -5,6 +5,11 @@ All notable changes to Toonami Aftermath Downlink will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Critical: Container healthcheck failure** - Added `wget` package to runtime stage of Dockerfile. The HEALTHCHECK directive was failing because `wget` was only installed in the build stage, causing containers to be marked as unhealthy and potentially restarted or replaced by orchestration systems.
+
 ## [2.0.0] - 2026-02-18 - Comprehensive Refinement Release
 
 This major release represents a comprehensive refinement pass focused on UI polish, reliability, speed, maintainability, and ops hygiene while preserving all existing functionality.
