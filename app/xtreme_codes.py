@@ -4,6 +4,7 @@ import logging
 import os
 import secrets
 import tempfile
+import threading
 from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -36,6 +37,7 @@ class CredentialManager:
         """Initialize credential manager with temporary secret storage."""
         self._current_password: str | None = None
         self._current_recovery_code: str | None = None
+        self._lock = threading.Lock()
 
     def get_stored_credentials(self) -> dict[str, Any]:
         """Get credentials from storage (without plaintext password)."""
@@ -59,40 +61,47 @@ class CredentialManager:
 
     def get_password_for_display(self) -> str | None:
         """Get password for one-time display in UI."""
-        return self._current_password
+        with self._lock:
+            return self._current_password
 
     def pop_password_for_display(self) -> str | None:
         """Consume password for one-time display in UI."""
-        password = self._current_password
-        self._current_password = None
-        return password
+        with self._lock:
+            password = self._current_password
+            self._current_password = None
+            return password
 
     def clear_password_cache(self) -> None:
         """Clear cached plaintext password."""
-        self._current_password = None
+        with self._lock:
+            self._current_password = None
 
     def get_recovery_code_for_display(self) -> str | None:
         """Get recovery code for one-time display in UI."""
-        return self._current_recovery_code
+        with self._lock:
+            return self._current_recovery_code
 
     def pop_recovery_code_for_display(self) -> str | None:
         """Consume recovery code for one-time display in UI."""
-        recovery_code = self._current_recovery_code
-        self._current_recovery_code = None
-        return recovery_code
+        with self._lock:
+            recovery_code = self._current_recovery_code
+            self._current_recovery_code = None
+            return recovery_code
 
     def clear_recovery_code_cache(self) -> None:
         """Clear cached recovery code."""
-        self._current_recovery_code = None
+        with self._lock:
+            self._current_recovery_code = None
 
     def cache_plaintext_secrets(
         self, *, password: str | None = None, recovery_code: str | None = None
     ) -> None:
         """Store one-time secrets for later consumption by API responses."""
-        if password is not None:
-            self._current_password = password
-        if recovery_code is not None:
-            self._current_recovery_code = recovery_code
+        with self._lock:
+            if password is not None:
+                self._current_password = password
+            if recovery_code is not None:
+                self._current_recovery_code = recovery_code
 
 
 # Global instance
