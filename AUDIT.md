@@ -37,7 +37,7 @@ This document provides a comprehensive technical audit of the Toonami Aftermath 
 ## Technology Stack
 
 | Component | Technology | Version | Purpose |
-|-----------|------------|---------|---------|
+| --------- | ------------ | ------- | -------- |
 | Backend | Python | 3.12 | Core application logic |
 | Web Framework | FastAPI | 0.115.0 | API and web serving |
 | Server | Uvicorn | 0.30.6 | ASGI server |
