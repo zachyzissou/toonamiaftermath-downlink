@@ -4,14 +4,16 @@ import logging
 import mimetypes
 import os
 import re
+import secrets
 import shutil
 import sys
+import time
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request, Response
+from fastapi import FastAPI, Header, HTTPException, Query, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import (
@@ -76,6 +78,16 @@ ALLOWED_ORIGINS = (
     if os.environ.get("ALLOWED_ORIGINS")
     else []
 )
+APP_REFRESH_RATE_LIMIT_SECONDS = int(os.environ.get("APP_REFRESH_RATE_LIMIT_SECONDS", "5"))
+APP_REFRESH_TOKEN = os.environ.get("APP_REFRESH_TOKEN", "").strip()
+ALLOW_ANONYMOUS_LOCAL_REFRESH = os.environ.get(
+    "ALLOW_ANONYMOUS_LOCAL_REFRESH", ""
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 # MIME type constants
 MIME_M3U = "application/x-mpegURL"
@@ -220,6 +232,60 @@ def setup_logging() -> logging.Logger:
 
 # Initialize structured logging
 logger = setup_logging()
+
+
+def _parse_bool_env(value: str | None, default: bool = False) -> bool:
+    """Parse common truthy/falsey string values."""
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _is_local_host(host: str | None) -> bool:
+    """Return True when client host is local."""
+    if not host:
+        return False
+    return host.startswith(("127.", "::1", "localhost"))
+
+
+def _extract_bearer_token(authorization: str | None) -> str | None:
+    """Extract bearer token value from an Authorization header."""
+    if not authorization:
+        return None
+    if authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return authorization
+
+
+def _is_refresh_request_allowed(
+    request: Request,
+    x_admin_token: str | None = None,
+    authorization: str | None = None,
+) -> bool:
+    """Validate /refresh request authorization."""
+    if ALLOW_ANONYMOUS_LOCAL_REFRESH and _is_local_host(
+        request.client.host if request.client else None
+    ):
+        return True
+
+    if APP_REFRESH_TOKEN:
+        provided_token = x_admin_token or _extract_bearer_token(authorization)
+        if not provided_token:
+            return False
+        return secrets.compare_digest(provided_token, APP_REFRESH_TOKEN)
+
+    return False
+
+
+def _is_refresh_rate_limited() -> tuple[bool, float]:
+    """Return whether refresh is currently rate-limited and remaining delay."""
+    now = time.monotonic()
+    last_request = getattr(app.state, "last_refresh_request", 0.0)
+    elapsed = now - float(last_request)
+    if elapsed < APP_REFRESH_RATE_LIMIT_SECONDS:
+        return True, APP_REFRESH_RATE_LIMIT_SECONDS - elapsed
+    app.state.last_refresh_request = now
+    return False, 0.0
 
 
 def read_state() -> dict[str, Any]:
@@ -749,7 +815,23 @@ async def channels():
 
 
 @app.post("/refresh")
-async def refresh():
+async def refresh(
+    request: Request,
+    x_admin_token: str | None = Header(default=None, alias="X-Admin-Token"),
+    authorization: str | None = Header(default=None),
+):
+    if not _is_refresh_request_allowed(
+        request, x_admin_token=x_admin_token, authorization=authorization
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized refresh request")
+
+    throttled, wait_seconds = _is_refresh_rate_limited()
+    if throttled:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Refresh in progress or rate-limited. Retry in {int(wait_seconds)}s.",
+        )
+
     task = asyncio.create_task(generate_files())
     app.state.last_refresh_task = task
     return {"ok": True}
