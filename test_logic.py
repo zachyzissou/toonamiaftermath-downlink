@@ -13,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent / "app"))
 
 def test_credential_generation():
     """Test credential generation logic."""
-    print("🔐 Testing credential generation...")
+    print("Testing credential generation...")
 
     # Simulate the credential generation logic
     username = f"toonami_{secrets.token_hex(3)}"
@@ -28,17 +28,17 @@ def test_credential_generation():
         "installation_id": secrets.token_hex(8),
     }
 
-    print(f"✅ Generated username: {creds['username']}")
-    print(f"✅ Generated password: {creds['password'][:4]}...")
-    print(f"✅ Installation ID: {creds['installation_id']}")
-    print(f"✅ Created at: {creds['created_at']}")
+    print(f"[OK] Generated username: {creds['username']}")
+    print(f"[OK] Generated password: {creds['password'][:4]}...")
+    print(f"[OK] Installation ID: {creds['installation_id']}")
+    print(f"[OK] Created at: {creds['created_at']}")
 
     return creds
 
 
 def test_m3u_parsing():
     """Test M3U parsing logic."""
-    print("\n📺 Testing M3U parsing...")
+    print("\nTesting M3U parsing...")
 
     # Sample M3U content
     sample_m3u = """#EXTM3U
@@ -82,7 +82,7 @@ http://example.com/stream2?quality=high
             channels.append(pending)
             pending = None
 
-    print(f"✅ Parsed {len(channels)} channels:")
+    print(f"[OK] Parsed {len(channels)} channels:")
     for ch in channels:
         print(f"   - {ch['name']} (#{ch['number']}) -> {ch['url']}")
 
@@ -91,7 +91,7 @@ http://example.com/stream2?quality=high
 
 def test_stream_code_injection():
     """Test stream code injection logic."""
-    print("\n🔗 Testing stream code injection...")
+    print("\nTesting stream code injection...")
 
     test_urls = [
         "http://example.com/stream1",
@@ -106,12 +106,12 @@ def test_stream_code_injection():
         else:
             modified_url = f"{url}?code={stream_code}"
 
-        print(f"✅ {url} -> {modified_url}")
+        print(f"[OK] {url} -> {modified_url}")
 
 
 def test_file_structure():
     """Test that all required files exist."""
-    print("\n📁 Testing file structure...")
+    print("\nTesting file structure...")
 
     required_files = [
         "app/server.py",
@@ -131,13 +131,13 @@ def test_file_structure():
     for file_path in required_files:
         full_path = base_path / file_path
         if full_path.exists():
-            print(f"✅ {file_path}")
+            print(f"[OK] {file_path}")
         else:
-            print(f"❌ {file_path} - MISSING")
+            print(f"[MISSING] {file_path}")
 
 
 def main():
-    print("🚀 Toonami Aftermath: Downlink - Core Logic Test")
+    print("Toonami Aftermath: Downlink - Core Logic Test")
     print("=" * 60)
 
     try:
@@ -147,16 +147,16 @@ def main():
         test_stream_code_injection()
         test_file_structure()
 
-        print("\n🎉 All core logic tests passed!")
-        print("🐳 Ready for Docker deployment!")
-        print("\n💡 To run the full application:")
+        print("\nAll core logic tests passed.")
+        print("Ready for Docker deployment.")
+        print("\nTo run the full application:")
         print("   docker build -t toonami-downlink:latest .")
         print(
             "   docker run -d --name toonami-downlink -p 7004:7004 -v ./data:/data toonami-downlink:latest"
         )
 
     except Exception as e:
-        print(f"\n❌ Test failed: {e}")
+        print(f"\nTest failed: {e}")
         import traceback
 
         traceback.print_exc()
