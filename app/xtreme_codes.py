@@ -2,6 +2,8 @@ import os
 import json
 import secrets
 import hashlib
+import logging
+import tempfile
 from pathlib import Path
 from typing import Optional, Dict, Any, Tuple, List
 from datetime import datetime, timezone, timedelta
@@ -16,6 +18,13 @@ RECOVERY_FILE = DATA_DIR / "credentials.recovery"
 SALT_LENGTH = 32
 PASSWORD_MIN_LENGTH = 8
 PBKDF2_ITERATIONS = 100_000
+MAX_PBKDF2_ITERATIONS = 1_000_000
+
+logger = logging.getLogger(__name__)
+
+
+class CredentialStorageError(RuntimeError):
+    """Raised when credential storage cannot be safely read."""
 
 
 class CredentialManager:
@@ -28,17 +37,33 @@ class CredentialManager:
 
     def get_stored_credentials(self) -> Dict[str, Any]:
         """Get credentials from storage (without plaintext password)."""
-        if CREDENTIALS_FILE.exists():
-            try:
-                with open(CREDENTIALS_FILE, "r") as f:
-                    return json.load(f)
-            except Exception:
-                pass
-        return {}
+        if not CREDENTIALS_FILE.exists():
+            return {}
+
+        try:
+            with CREDENTIALS_FILE.open("r", encoding="utf-8") as f:
+                loaded = json.load(f)
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.error("Failed reading credentials file %s: %s", CREDENTIALS_FILE, exc)
+            raise CredentialStorageError(
+                "credentials.json is unreadable or invalid; manual recovery required"
+            ) from exc
+
+        if not isinstance(loaded, dict):
+            logger.error("Invalid credentials file format in %s", CREDENTIALS_FILE)
+            raise CredentialStorageError("credentials.json must contain a JSON object")
+
+        return loaded
 
     def get_password_for_display(self) -> Optional[str]:
         """Get password for one-time display in UI."""
         return self._current_password
+
+    def pop_password_for_display(self) -> Optional[str]:
+        """Consume password for one-time display in UI."""
+        password = self._current_password
+        self._current_password = None
+        return password
 
     def clear_password_cache(self) -> None:
         """Clear cached plaintext password."""
@@ -48,9 +73,24 @@ class CredentialManager:
         """Get recovery code for one-time display in UI."""
         return self._current_recovery_code
 
+    def pop_recovery_code_for_display(self) -> Optional[str]:
+        """Consume recovery code for one-time display in UI."""
+        recovery_code = self._current_recovery_code
+        self._current_recovery_code = None
+        return recovery_code
+
     def clear_recovery_code_cache(self) -> None:
         """Clear cached recovery code."""
         self._current_recovery_code = None
+
+    def cache_plaintext_secrets(
+        self, *, password: Optional[str] = None, recovery_code: Optional[str] = None
+    ) -> None:
+        """Store one-time secrets for later consumption by API responses."""
+        if password is not None:
+            self._current_password = password
+        if recovery_code is not None:
+            self._current_recovery_code = recovery_code
 
 
 # Global instance
@@ -60,8 +100,33 @@ _credential_manager = CredentialManager()
 def _save_stored_credentials(stored_creds: Dict[str, Any]) -> None:
     """Persist credentials safely to disk."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(CREDENTIALS_FILE, "w") as f:
-        json.dump(stored_creds, f, indent=2)
+    temp_path: Optional[Path] = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(DATA_DIR),
+            prefix="credentials.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            json.dump(stored_creds, tmp, indent=2)
+            tmp.write("\n")
+            tmp.flush()
+            os.fsync(tmp.fileno())
+            temp_path = Path(tmp.name)
+
+        os.replace(temp_path, CREDENTIALS_FILE)
+        try:
+            os.chmod(CREDENTIALS_FILE, 0o600)
+        except Exception:
+            pass
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def _write_recovery_code_file(recovery_code: str) -> None:
@@ -172,18 +237,9 @@ def load_or_create_credentials() -> Dict[str, Any]:
     if stored_creds and all(k in stored_creds for k in ["username", "password_hash", "created_at"]):
         stored_creds, recovery_code_for_display = _normalize_stored_credentials(stored_creds)
         if recovery_code_for_display:
-            _credential_manager._current_recovery_code = recovery_code_for_display
+            _credential_manager.cache_plaintext_secrets(recovery_code=recovery_code_for_display)
 
-        result = dict(stored_creds)
-        cached_password = _credential_manager.get_password_for_display()
-        if cached_password:
-            result["password"] = cached_password
-
-        cached_recovery = _credential_manager.get_recovery_code_for_display()
-        if cached_recovery:
-            result["recovery_code"] = cached_recovery
-
-        return result
+        return dict(stored_creds)
 
     print("Generating unique Xtreme Codes credentials for first-time setup...")
     new_creds = generate_credentials()
@@ -207,13 +263,10 @@ def load_or_create_credentials() -> Dict[str, Any]:
     print(f"Generated credentials - Username: {stored_creds['username']}")
     print("View full credentials and recovery code in the WebUI once started")
 
-    _credential_manager._current_password = new_creds["password"]
-    _credential_manager._current_recovery_code = recovery_code
-
-    result = dict(stored_creds)
-    result["password"] = new_creds["password"]
-    result["recovery_code"] = recovery_code
-    return result
+    _credential_manager.cache_plaintext_secrets(
+        password=new_creds["password"], recovery_code=recovery_code
+    )
+    return dict(stored_creds)
 
 
 def _verify_pbkdf2_password(stored_creds: Dict[str, Any], password: str) -> bool:
@@ -228,7 +281,17 @@ def _verify_pbkdf2_password(stored_creds: Dict[str, Any], password: str) -> bool
     except ValueError:
         return False
 
-    iterations = int(stored_creds.get("pbkdf2_iterations", PBKDF2_ITERATIONS))
+    raw_iterations = stored_creds.get("pbkdf2_iterations", PBKDF2_ITERATIONS)
+    try:
+        iterations = int(raw_iterations)
+    except (TypeError, ValueError):
+        iterations = PBKDF2_ITERATIONS
+
+    if iterations <= 0:
+        iterations = PBKDF2_ITERATIONS
+    if iterations > MAX_PBKDF2_ITERATIONS:
+        iterations = MAX_PBKDF2_ITERATIONS
+
     candidate_hash = hashlib.pbkdf2_hmac("sha256", password.encode(), salt, iterations).hex()
     return secrets.compare_digest(candidate_hash, hash_hex)
 
@@ -308,13 +371,8 @@ def rotate_credentials(new_password: Optional[str] = None) -> Dict[str, Any]:
     _save_stored_credentials(rotated)
     _write_recovery_code_file(recovery_code)
 
-    _credential_manager._current_password = password
-    _credential_manager._current_recovery_code = recovery_code
-
-    result = dict(rotated)
-    result["password"] = password
-    result["recovery_code"] = recovery_code
-    return result
+    _credential_manager.cache_plaintext_secrets(password=password, recovery_code=recovery_code)
+    return dict(rotated)
 
 
 def get_recovery_file_path() -> str:

@@ -56,6 +56,7 @@ def test_api_endpoints(app_client):
     assert "username" in creds
     assert "server_url" in creds
     assert "password_available" in creds
+    assert creds["recovery"]["file_path"] == "credentials.recovery"
 
     response = client.get("/m3u")
     assert response.status_code == 404
@@ -114,6 +115,7 @@ def test_rotate_credentials_with_recovery_code(app_client):
     assert rotated["username"] == creds["username"]
     assert rotated["password"] == "new-pass-1234"
     assert rotated.get("recovery_code")
+    assert rotated["recovery_file"] == "credentials.recovery"
 
     auth = client.get(
         f"/player_api.php?username={rotated['username']}&password={rotated['password']}"
@@ -123,6 +125,22 @@ def test_rotate_credentials_with_recovery_code(app_client):
     stored = json.loads((data_dir / "credentials.json").read_text())
     assert "password_salt" in stored
     assert stored.get("hash_algorithm") == "pbkdf2_sha256"
+
+
+def test_credentials_endpoint_consumes_password_once(app_client):
+    client, _, _ = app_client
+
+    first = client.get("/credentials")
+    assert first.status_code == 200
+    first_data = first.json()
+    assert first_data["password_available"] is True
+    assert isinstance(first_data["password"], str)
+
+    second = client.get("/credentials")
+    assert second.status_code == 200
+    second_data = second.json()
+    assert second_data["password_available"] is False
+    assert second_data["password"] is None
 
 
 def test_refresh_failure_path_surfaces_in_task(app_client, monkeypatch):

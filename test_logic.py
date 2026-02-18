@@ -1,7 +1,8 @@
 import importlib
 import json
 import sys
-from pathlib import Path
+
+import pytest
 
 
 def _reload_module(module_name: str):
@@ -19,8 +20,10 @@ def test_credential_generation_writes_secure_metadata(monkeypatch, tmp_path):
     creds = xtreme.load_or_create_credentials()
 
     assert creds["username"].startswith("toonami_")
-    assert isinstance(creds.get("password"), str)
-    assert isinstance(creds.get("recovery_code"), str)
+    assert "password" not in creds
+    assert "recovery_code" not in creds
+    assert isinstance(xtreme._credential_manager.pop_password_for_display(), str)
+    assert isinstance(xtreme._credential_manager.pop_recovery_code_for_display(), str)
 
     stored = json.loads((data_dir / "credentials.json").read_text())
     assert "password_salt" in stored
@@ -76,3 +79,35 @@ def test_parse_extinf_handles_expected_fields(monkeypatch, tmp_path):
     assert channel_id == "toonami1"
     assert number == "1"
     assert name == "Toonami Channel 1"
+
+
+def test_invalid_credentials_file_raises_storage_error(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+
+    xtreme = _reload_module("app.xtreme_codes")
+    (data_dir / "credentials.json").write_text("{bad json")
+
+    with pytest.raises(xtreme.CredentialStorageError):
+        xtreme.load_or_create_credentials()
+
+
+def test_pbkdf2_iteration_value_is_clamped(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+
+    xtreme = _reload_module("app.xtreme_codes")
+    creds = xtreme.load_or_create_credentials()
+    password = xtreme._credential_manager.pop_password_for_display()
+    assert isinstance(password, str)
+
+    stored = json.loads((data_dir / "credentials.json").read_text())
+    stored["pbkdf2_iterations"] = "not-a-number"
+    (data_dir / "credentials.json").write_text(json.dumps(stored))
+    assert xtreme.verify_credentials(creds["username"], password) is True
+
+    stored["pbkdf2_iterations"] = -10
+    (data_dir / "credentials.json").write_text(json.dumps(stored))
+    assert xtreme.verify_credentials(creds["username"], password) is True

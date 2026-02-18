@@ -640,16 +640,10 @@ async def get_credentials(request: Request):
     host = request.headers.get('host', 'localhost:7004')
     protocol = "https" if request.url.scheme == "https" else "http"
 
-    display_password = _credential_manager.get_password_for_display()
-    display_recovery_code = _credential_manager.get_recovery_code_for_display()
+    display_password = _credential_manager.pop_password_for_display()
+    display_recovery_code = _credential_manager.pop_recovery_code_for_display()
     password_available = bool(display_password)
     recovery_code_available = bool(display_recovery_code)
-
-    # Clear one-time secrets from memory once presented to caller.
-    if password_available:
-        _credential_manager.clear_password_cache()
-    if recovery_code_available:
-        _credential_manager.clear_recovery_code_cache()
 
     password_for_urls = display_password if password_available else "[PASSWORD]"
 
@@ -671,7 +665,7 @@ async def get_credentials(request: Request):
             "for secure rotation."
         ),
         "recovery": {
-            "file_path": get_recovery_file_path(),
+            "file_path": Path(get_recovery_file_path()).name,
             "rotate_endpoint": "/credentials/rotate"
         },
         "setup_guide": {
@@ -730,10 +724,8 @@ async def rotate_xtreme_credentials(
     protocol = "https" if request.url.scheme == "https" else "http"
 
     # Return one-time secrets immediately after rotation.
-    response_password = rotated.get("password")
-    response_recovery_code = rotated.get("recovery_code")
-    _credential_manager.clear_password_cache()
-    _credential_manager.clear_recovery_code_cache()
+    response_password = _credential_manager.pop_password_for_display()
+    response_recovery_code = _credential_manager.pop_recovery_code_for_display()
 
     return {
         "username": rotated.get("username"),
@@ -742,7 +734,7 @@ async def rotate_xtreme_credentials(
         "created_at": rotated.get("created_at"),
         "installation_id": rotated.get("installation_id"),
         "server_url": host,
-        "recovery_file": get_recovery_file_path(),
+        "recovery_file": Path(get_recovery_file_path()).name,
         "direct_urls": {
             "xtreme_m3u": (
                 f"{protocol}://{host}/get.php?username={rotated.get('username')}"
