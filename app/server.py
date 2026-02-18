@@ -156,14 +156,16 @@ else:
     # Development mode - allow localhost origins only if explicitly allowed
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost",
-            "http://127.0.0.1",
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ]
-        if APP_ENV in {"dev", "development", "local"}
-        else [],
+        allow_origins=(
+            [
+                "http://localhost",
+                "http://127.0.0.1",
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+            if APP_ENV in {"dev", "development", "local"}
+            else []
+        ),
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],

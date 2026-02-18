@@ -108,7 +108,7 @@ jobs:
         run: mkdir -p .security-reports
 
       - name: Check for security vulnerabilities in dependencies
-        run: safety check --json --output .security-reports/safety.json
+        run: safety check --file requirements.txt --output json --save-json .security-reports/safety.json
 
       - name: Run Bandit security scanner
         run: bandit -r app/ -f json -o .security-reports/bandit.json
