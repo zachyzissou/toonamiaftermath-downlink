@@ -156,14 +156,16 @@ else:
     # Development mode - allow localhost origins only if explicitly allowed
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            "http://localhost",
-            "http://127.0.0.1",
-            "http://localhost:3000",
-            "http://127.0.0.1:3000",
-        ]
-        if APP_ENV in {"dev", "development", "local"}
-        else [],
+        allow_origins=(
+            [
+                "http://localhost",
+                "http://127.0.0.1",
+                "http://localhost:3000",
+                "http://127.0.0.1:3000",
+            ]
+            if APP_ENV in {"dev", "development", "local"}
+            else []
+        ),
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
@@ -185,8 +187,8 @@ def setup_web_routes():
         mimetypes.add_type("image/svg+xml", ".svgz")
         mimetypes.add_type("text/css", ".css")
         mimetypes.add_type("application/javascript", ".js")
-    except Exception:
-        pass
+    except (AttributeError, OSError, ValueError) as exc:
+        logger.debug("Could not register MIME types: %s", exc)
 
     if (WEB_DIR / "assets").exists():
         app.mount(
@@ -1433,8 +1435,8 @@ async def on_startup():
         created_at = datetime.fromisoformat(creds.get("created_at", ""))
         time_since_creation = datetime.now(UTC) - created_at
         created_recently = time_since_creation.total_seconds() < 60  # Created in last minute
-    except Exception:
-        pass
+    except (TypeError, ValueError) as exc:
+        logger.debug("Could not parse credential creation time: %s", exc)
 
     if created_recently:
         logger.info("Welcome! This appears to be your first launch.")

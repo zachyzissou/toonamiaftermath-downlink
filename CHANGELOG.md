@@ -156,7 +156,7 @@ No migration steps required for existing deployments.
 ### 📊 Performance Benchmarks
 
 | Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
+| ------ | ------ | ----- | ------------ |
 | Response size (gzipped) | 100% | 70-80% | 20-30% reduction |
 | Cache hit rate | 0% | 95%+ | New caching system |
 | First contentful paint | ~800ms | ~500ms | 37% faster |
