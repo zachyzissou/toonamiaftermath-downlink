@@ -249,6 +249,24 @@ def _parse_bool_env(value: str | None, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+# Serialize generation to prevent overlapping CLI runs.
+_generation_lock = asyncio.Lock()
+
+
+def _generation_in_progress() -> bool:
+    """Return whether a generation task or lock is currently active."""
+    task = getattr(app.state, "generation_task", None)
+    if task is not None and hasattr(task, "done") and not task.done():
+        return True
+    return _generation_lock.locked()
+
+
+async def _run_generate_files_serialized() -> dict[str, Any]:
+    """Run generation while preventing concurrent CLI invocations."""
+    async with _generation_lock:
+        return await generate_files()
+
+
 def _is_local_host(host: str | None) -> bool:
     """Return True when client host is local."""
     if not host:
@@ -865,7 +883,22 @@ async def refresh(
             detail=f"Refresh in progress or rate-limited. Retry in {int(wait_seconds)}s.",
         )
 
-    task = asyncio.create_task(generate_files())
+    if _generation_in_progress():
+        raise HTTPException(status_code=429, detail="Generation already in progress")
+
+    task = asyncio.create_task(_run_generate_files_serialized())
+
+    def _refresh_completion(task_result: asyncio.Task[dict[str, Any]]) -> None:
+        if task_result.cancelled():
+            logger.info("Manual refresh task cancelled")
+            return
+        exc = task_result.exception()
+        if exc:
+            logger.error("Manual refresh task failed: %s", exc)
+            return
+        logger.info("Manual refresh task completed successfully")
+
+    task.add_done_callback(_refresh_completion)
     app.state.last_refresh_task = task
     return {"ok": True}
 
@@ -1326,7 +1359,7 @@ async def scheduler_loop():
     # Initial run at startup
     logger.info("Starting scheduler with initial file generation")
     try:
-        await generate_files()
+        await _run_generate_files_serialized()
         logger.info("Initial file generation completed successfully")
     except Exception as e:
         logger.error("Initial generation failed: %s", e)
@@ -1355,7 +1388,13 @@ async def scheduler_loop():
             await asyncio.sleep(delay)
 
             # Run scheduled generation
-            await generate_files()
+            if _generation_in_progress():
+                logger.warning(
+                    "Scheduled generation skipped: another generation is already running"
+                )
+                continue
+
+            await _run_generate_files_serialized()
             logger.info("Scheduled file generation completed successfully")
             consecutive_failures = 0  # Reset failure counter on success
 
