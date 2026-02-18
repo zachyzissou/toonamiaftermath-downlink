@@ -1,3 +1,4 @@
+import errno
 import hashlib
 import json
 import logging
@@ -47,7 +48,12 @@ class CredentialManager:
         try:
             with CREDENTIALS_FILE.open("r", encoding="utf-8") as f:
                 loaded = json.load(f)
-        except (OSError, json.JSONDecodeError) as exc:
+        except json.JSONDecodeError as exc:
+            logger.error("Invalid credentials file format in %s", CREDENTIALS_FILE)
+            raise CredentialStorageError("credentials.json has invalid format") from exc
+        except OSError as exc:
+            if exc.errno == errno.EACCES and _recover_unreadable_credentials_file():
+                return {}
             logger.error("Failed reading credentials file %s: %s", CREDENTIALS_FILE, exc)
             raise CredentialStorageError(
                 "credentials.json is unreadable or invalid; manual recovery required"
@@ -106,6 +112,36 @@ class CredentialManager:
 
 # Global instance
 _credential_manager = CredentialManager()
+
+
+def _recover_unreadable_credentials_file() -> bool:
+    """Move unreadable credentials file to a timestamped backup name.
+
+    Returns True when a backup was created and application state can continue
+    with a regenerated credentials file.
+    """
+    if not CREDENTIALS_FILE.exists():
+        return False
+
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    backup_path = DATA_DIR / f"credentials.corrupt.{timestamp}.json"
+    try:
+        CREDENTIALS_FILE.rename(backup_path)
+        logger.warning(
+            "Moved unreadable credentials file from %s to %s",
+            CREDENTIALS_FILE,
+            backup_path,
+        )
+        return True
+    except Exception as exc:
+        logger.error(
+            "Unable to move unreadable credentials file %s to %s: %s",
+            CREDENTIALS_FILE,
+            backup_path,
+            exc,
+        )
+        return False
 
 
 def _save_stored_credentials(stored_creds: dict[str, Any]) -> None:
