@@ -30,9 +30,7 @@ def test_api_endpoints():
     with TestClient(app) as client:
         # Test status endpoint
         response = client.get("/status")
-        assert (
-            response.status_code == 200
-        ), f"Status endpoint failed: {response.status_code}"
+        assert response.status_code == 200, f"Status endpoint failed: {response.status_code}"
         data = response.json()
         assert "channel_count" in data
         assert "cron" in data
@@ -40,9 +38,7 @@ def test_api_endpoints():
 
         # Test channels endpoint
         response = client.get("/channels")
-        assert (
-            response.status_code == 200
-        ), f"Channels endpoint failed: {response.status_code}"
+        assert response.status_code == 200, f"Channels endpoint failed: {response.status_code}"
         channels = response.json()
         assert isinstance(channels, list)
         print("✅ Channels endpoint working")
@@ -80,9 +76,10 @@ def test_api_endpoints():
 
         # Test health endpoint
         response = client.get("/health")
-        assert (
-            response.status_code in [200, 503]
-        ), f"Health endpoint failed: {response.status_code}"
+        assert response.status_code in [
+            200,
+            503,
+        ], f"Health endpoint failed: {response.status_code}"
         health_data = response.json()
         assert "status" in health_data
         assert "timestamp" in health_data
@@ -120,15 +117,11 @@ def test_xtreme_codes_api():
         creds_response = client.get("/credentials")
         creds = creds_response.json()
         username = creds["username"]
-        password = creds.get(
-            "password", "test_password"
-        )  # Fallback for existing installs
+        password = creds.get("password", "test_password")  # Fallback for existing installs
 
         if password and password != "********":
             # Test with valid credentials
-            response = client.get(
-                f"/player_api.php?username={username}&password={password}"
-            )
+            response = client.get(f"/player_api.php?username={username}&password={password}")
             assert (
                 response.status_code == 200
             ), f"Valid auth should work: {response.status_code}"

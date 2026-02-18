@@ -172,12 +172,8 @@ def get_server_info(request: Request) -> dict[str, Any]:
 
     return {
         "user_info": {
-            "username": (
-                request.state.username if hasattr(request.state, "username") else ""
-            ),
-            "password": (
-                request.state.password if hasattr(request.state, "password") else ""
-            ),
+            "username": (request.state.username if hasattr(request.state, "username") else ""),
+            "password": (request.state.password if hasattr(request.state, "password") else ""),
             "message": "Toonami Aftermath: Downlink",
             "auth": 1,
             "status": "Active",
