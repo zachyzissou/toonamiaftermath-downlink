@@ -156,7 +156,14 @@ else:
     # Development mode - allow localhost origins only if explicitly allowed
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost", "http://127.0.0.1", "http://localhost:3000", "http://127.0.0.1:3000"] if APP_ENV in {"dev", "development", "local"} else [],
+        allow_origins=[
+            "http://localhost",
+            "http://127.0.0.1",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+        if APP_ENV in {"dev", "development", "local"}
+        else [],
         allow_credentials=False,
         allow_methods=["GET", "POST"],
         allow_headers=["*"],
@@ -1099,6 +1106,8 @@ async def rotate_xtreme_credentials(request: Request, payload: CredentialsRotate
 async def get_stream_codes(request: Request):
     """Get ready-to-use stream code URLs with credentials pre-filled."""
     creds = load_or_create_credentials()
+    display_password = _credential_manager.get_password_for_display()
+    password_available = bool(display_password)
     host = request.headers.get("host", "localhost:7004")
     protocol = "https" if request.url.scheme == "https" else "http"
 
@@ -1114,7 +1123,8 @@ async def get_stream_codes(request: Request):
         "description": "Ready-to-use M3U URLs with different stream codes appended",
         "credentials": {
             "username": creds.get("username"),
-            "password": creds.get("password"),
+            "password": display_password if password_available else None,
+            "password_available": password_available,
         },
         "usage": "Copy any URL above directly into your IPTV player - no credential entry needed!",
     }
