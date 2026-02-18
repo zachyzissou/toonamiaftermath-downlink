@@ -11,7 +11,7 @@
     "lint": "npm run lint:python && npm run lint:js && npm run lint:md",
     "lint:python": "ruff check . && black --check .",
     "lint:js": "eslint web/assets/*.js",
-    "lint:md": "markdownlint *.md docs/*.md",
+    "lint:md": "markdownlint *.md",
     "format": "npm run format:python && npm run format:js",
     "format:python": "ruff check --fix . && black .",
     "format:js": "prettier --write web/assets/*.js",

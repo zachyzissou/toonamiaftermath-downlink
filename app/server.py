@@ -5,9 +5,10 @@ import mimetypes
 import os
 import re
 import shutil
+import sys
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-import sys
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query, Request, Response
@@ -21,30 +22,6 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from starlette.responses import Response as StarletteResponse
-from starlette.types import Scope, Receive, Send
-
-
-class CachedStaticFiles(StaticFiles):
-    """Static files with cache headers for better performance."""
-    
-    def file_response(self, *args, **kwargs) -> StarletteResponse:
-        response = super().file_response(*args, **kwargs)
-        
-        # Add cache headers for static assets
-        path = kwargs.get('path', '')
-        if hasattr(path, '__str__'):
-            path_str = str(path)
-            if path_str.endswith(('.svg', '.png', '.jpg', '.jpeg', '.ico')):
-                max_age = 86400  # 1 day for images
-            elif path_str.endswith(('.css', '.js')):
-                max_age = 3600   # 1 hour for CSS/JS (may change during development)
-            else:
-                max_age = 3600   # 1 hour default
-                
-            response.headers['Cache-Control'] = f'public, max-age={max_age}'
-            response.headers['X-Content-Type-Options'] = 'nosniff'
-            
-        return response
 
 from .xtreme_codes import (
     _credential_manager,
@@ -54,6 +31,26 @@ from .xtreme_codes import (
     load_or_create_credentials,
     verify_credentials,
 )
+
+
+class CachedStaticFiles(StaticFiles):
+    """Static files with cache headers for better performance."""
+
+    def file_response(self, full_path: Path, *args: Any, **kwargs: Any) -> StarletteResponse:
+        response = super().file_response(full_path, *args, **kwargs)
+
+        path_str = str(full_path)
+        if path_str.endswith((".svg", ".png", ".jpg", ".jpeg", ".ico")):
+            max_age = 86400  # 1 day for images
+        elif path_str.endswith((".css", ".js")):
+            max_age = 3600  # 1 hour for CSS/JS (may change during development)
+        else:
+            max_age = 3600  # 1 hour default
+
+        response.headers["Cache-Control"] = f"public, max-age={max_age}"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
 
 # Application constants
 DEFAULT_CRON_SCHEDULE = "0 3 * * *"
@@ -89,6 +86,21 @@ MSG_XML_NOT_FOUND = "XML not yet generated"
 M3U_PATH = DATA_DIR / "index.m3u"
 XML_PATH = DATA_DIR / "index.xml"
 STATE_PATH = DATA_DIR / "state.json"
+
+
+def sanitize_user_input(input_str: str, max_length: int = 100) -> str:
+    """Sanitize user input to prevent injection attacks."""
+    if not input_str:
+        return ""
+
+    sanitized = input_str.strip()[:max_length]
+
+    # Remove potentially dangerous shell/HTML characters.
+    dangerous_chars = ["<", ">", "&", '"', "'", ";", "|", "`"]
+    for char in dangerous_chars:
+        sanitized = sanitized.replace(char, "")
+
+    return sanitized
 
 
 def validate_credentials(username: str, password: str) -> tuple[str, str]:
@@ -155,8 +167,8 @@ def setup_web_routes():
         if (WEB_DIR / "index.html").exists():
             response = FileResponse(str(WEB_DIR / "index.html"))
             # Add basic cache headers for HTML (shorter cache for dynamic content)
-            response.headers['Cache-Control'] = 'public, max-age=300'  # 5 minutes
-            response.headers['X-Content-Type-Options'] = 'nosniff'
+            response.headers["Cache-Control"] = "public, max-age=300"  # 5 minutes
+            response.headers["X-Content-Type-Options"] = "nosniff"
             return response
         return {"message": "Toonami Aftermath: Downlink API", "docs": "/docs"}
 
@@ -175,22 +187,20 @@ else:
 def setup_logging() -> logging.Logger:
     """Setup structured logging with proper levels and formatting."""
     log_level = os.environ.get("LOG_LEVEL", "INFO").upper()
-    
+
     # Simple format that doesn't require extra fields
     log_format = "%(asctime)s [%(levelname)s] [%(name)s] %(message)s"
-    
+
     # Configure root logger
     logging.basicConfig(
         level=getattr(logging, log_level, logging.INFO),
         format=log_format,
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
-    
+
     logger = logging.getLogger("downlink")
     logger.setLevel(getattr(logging, log_level, logging.INFO))
-    
+
     return logger
 
 
@@ -278,17 +288,17 @@ async def generate_files() -> dict[str, Any]:
 
         try:
             # Use retry mechanism for CLI execution
-            async def run_cli():
-                return_code = await run_cmd(cmd, cwd=cwd)
+            async def run_cli(cmd_args: list[str] = cmd, cmd_cwd: str | None = cwd):
+                return_code = await run_cmd(cmd_args, cwd=cmd_cwd)
                 if return_code != 0:
                     raise RuntimeError(f"CLI returned non-zero exit code: {return_code}")
                 return return_code
-                
+
             await retry_operation(
                 run_cli,
                 max_retries=2,  # Fewer retries per command variant
                 delay=0.5,
-                operation_name=f"CLI execution: {cmd[0]}"
+                operation_name=f"CLI execution: {cmd[0]}",
             )
 
         except Exception as e:
@@ -385,9 +395,7 @@ async def get_cli_version() -> str | None:
         if proc.returncode == 0:
             version = out.decode().strip()
             return version if version else None
-        logger.warning(
-            f"CLI version check failed with code {proc.returncode}: {err.decode()}"
-        )
+        logger.warning(f"CLI version check failed with code {proc.returncode}: {err.decode()}")
         return None
 
     except Exception as e:
@@ -430,54 +438,57 @@ async def run_cmd_with_timeout(
     """Run command with timeout and proper error handling."""
     try:
         logger.info(f"Running command: {' '.join(cmd[:3])}... (timeout: {timeout}s)")
-        
+
         proc = await asyncio.create_subprocess_exec(
             *cmd,
             cwd=cwd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        
+
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
-            
+
             if proc.returncode != 0:
                 logger.warning(
                     f"Command failed with code {proc.returncode}: {stderr.decode()[:200]}"
                 )
             else:
                 logger.debug(f"Command succeeded: {stdout.decode()[:100]}")
-                
+
             return proc.returncode
-            
-        except asyncio.TimeoutError:
+
+        except TimeoutError:
             logger.error(f"Command timed out after {timeout}s, terminating process")
             proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error("Force killing timed out process")
                 proc.kill()
                 await proc.wait()
-            raise RuntimeError(f"Command timed out after {timeout}s")
-            
+            raise RuntimeError(f"Command timed out after {timeout}s") from None
+
     except FileNotFoundError as e:
         logger.error(f"Command not found: {cmd[0]} - {e}")
-        raise RuntimeError(f"Command not found: {cmd[0]}")
+        raise RuntimeError(f"Command not found: {cmd[0]}") from e
     except Exception as e:
         logger.error(f"Command execution failed: {e}")
-        raise RuntimeError(f"Command execution failed: {e}")
+        raise RuntimeError(f"Command execution failed: {e}") from e
 
 
 async def retry_operation(
-    operation_func, 
-    max_retries: int = MAX_RETRIES, 
+    operation_func: Callable[[], Awaitable[Any]],
+    max_retries: int = MAX_RETRIES,
     delay: float = RETRY_DELAY,
-    operation_name: str = "operation"
-):
+    operation_name: str = "operation",
+) -> Any:
     """Retry an operation with exponential backoff."""
-    last_exception = None
-    
+    if max_retries < 1:
+        raise ValueError("max_retries must be >= 1")
+
+    last_exception: Exception | None = None
+
     for attempt in range(max_retries):
         try:
             logger.debug(f"Attempting {operation_name} (attempt {attempt + 1}/{max_retries})")
@@ -485,7 +496,7 @@ async def retry_operation(
         except Exception as e:
             last_exception = e
             if attempt < max_retries - 1:
-                wait_time = delay * (2 ** attempt)  # Exponential backoff
+                wait_time = delay * (2**attempt)  # Exponential backoff
                 logger.warning(
                     f"{operation_name} failed (attempt {attempt + 1}), "
                     f"retrying in {wait_time}s: {e}"
@@ -493,7 +504,9 @@ async def retry_operation(
                 await asyncio.sleep(wait_time)
             else:
                 logger.error(f"{operation_name} failed after {max_retries} attempts: {e}")
-    
+
+    if last_exception is None:
+        raise RuntimeError(f"{operation_name} failed without a captured exception")
     raise last_exception
 
 
@@ -502,28 +515,25 @@ def validate_stream_code(stream_code: str) -> str:
     """Validate and sanitize stream code input with comprehensive checks."""
     if not stream_code:
         raise HTTPException(status_code=400, detail="Stream code cannot be empty")
-    
+
     # Length validation
     if len(stream_code) > MAX_STREAM_CODE_LENGTH:
         raise HTTPException(
-            status_code=400, 
-            detail=f"Stream code too long (max {MAX_STREAM_CODE_LENGTH} characters)"
+            status_code=400,
+            detail=f"Stream code too long (max {MAX_STREAM_CODE_LENGTH} characters)",
         )
-    
+
     # Character validation - allow alphanumeric, hyphens, and underscores only
     if not VALID_STREAM_CODE_PATTERN.match(stream_code):
         raise HTTPException(
-            status_code=400, 
-            detail="Stream code contains invalid characters (only alphanumeric, hyphens, and underscores allowed)"
+            status_code=400,
+            detail="Stream code contains invalid characters (only alphanumeric, hyphens, and underscores allowed)",
         )
-    
+
     # Additional security checks
     if stream_code.lower() in ["admin", "root", "system", "config", "api", "test"]:
-        raise HTTPException(
-            status_code=400,
-            detail="Stream code contains reserved word"
-        )
-    
+        raise HTTPException(status_code=400, detail="Stream code contains reserved word")
+
     return stream_code.lower()  # Normalize to lowercase
 
 
@@ -532,36 +542,19 @@ def validate_hostname(hostname: str) -> str:
     # Basic hostname validation
     if not hostname or len(hostname) > 253:
         raise HTTPException(status_code=400, detail="Invalid hostname")
-    
+
     # Prevent localhost/internal network access in production
-    if hostname.lower() in ["localhost", "127.0.0.1", "::1"] and os.environ.get("ENV", "dev") == "prod":
+    if (
+        hostname.lower() in ["localhost", "127.0.0.1", "::1"]
+        and os.environ.get("ENV", "dev") == "prod"
+    ):
         raise HTTPException(status_code=400, detail="Localhost access not allowed")
-    
+
     return hostname
 
 
-def sanitize_user_input(input_str: str, max_length: int = 100) -> str:
-    """Sanitize user input to prevent injection attacks."""
-    if not input_str:
-        return ""
-    
-    # Truncate and strip
-    sanitized = input_str.strip()[:max_length]
-    
-    # Remove potentially dangerous characters
-    dangerous_chars = ["<", ">", "&", "\"", "'", ";", "|", "&", "`"]
-    for char in dangerous_chars:
-        sanitized = sanitized.replace(char, "")
-    
-    return sanitized
-
-
 # Simple cache for channel data to avoid re-parsing M3U on every request
-_channel_cache = {
-    'data': None,
-    'timestamp': None,
-    'file_mtime': None
-}
+_channel_cache = {"data": None, "timestamp": None, "file_mtime": None}
 CACHE_TTL_SECONDS = 60  # Cache for 1 minute
 
 
@@ -571,19 +564,22 @@ def parse_channels_from_m3u() -> list[dict[str, Any]]:
         logger.warning("M3U file does not exist, returning empty channel list")
         return []
 
+    channels: list[dict[str, Any]] = []
+    current_time = datetime.now(UTC).timestamp()
+    file_mtime: float | None = None
+
     try:
-        # Check if we can use cached data
-        current_time = datetime.now(UTC).timestamp()
         file_mtime = M3U_PATH.stat().st_mtime
-        
-        if (_channel_cache['data'] is not None and 
-            _channel_cache['timestamp'] is not None and
-            _channel_cache['file_mtime'] == file_mtime and
-            current_time - _channel_cache['timestamp'] < CACHE_TTL_SECONDS):
-            return _channel_cache['data']
-            
+        # Check if we can use cached data
+        if (
+            _channel_cache["data"] is not None
+            and _channel_cache["timestamp"] is not None
+            and _channel_cache["file_mtime"] == file_mtime
+            and current_time - _channel_cache["timestamp"] < CACHE_TTL_SECONDS
+        ):
+            return _channel_cache["data"]
+
         # Cache miss - parse the file
-        channels: list[dict[str, Any]] = []
         pending: dict[str, Any] | None = None
         content = M3U_PATH.read_text(errors="ignore")
 
@@ -603,21 +599,20 @@ def parse_channels_from_m3u() -> list[dict[str, Any]]:
                     pending["url"] = line
                     channels.append(pending)
                 else:
-                    logger.warning(
-                        f"Invalid URL format at line {line_num}: {line[:50]}..."
-                    )
+                    logger.warning(f"Invalid URL format at line {line_num}: {line[:50]}...")
                 pending = None
 
     except Exception as e:
         logger.error(f"Failed parsing M3U: {e}")
+        return _channel_cache["data"] if _channel_cache["data"] is not None else []
 
     logger.info(f"Parsed {len(channels)} channels from M3U")
-    
+
     # Update cache
-    _channel_cache['data'] = channels
-    _channel_cache['timestamp'] = current_time
-    _channel_cache['file_mtime'] = file_mtime
-    
+    _channel_cache["data"] = channels
+    _channel_cache["timestamp"] = current_time
+    _channel_cache["file_mtime"] = file_mtime
+
     return channels
 
 
@@ -635,31 +630,37 @@ async def health_check():
                 "web_assets": "ok" if (WEB_DIR / "assets").exists() else "warning",
                 "cli_binary": "ok" if CLI_BIN.exists() else "error",
                 "memory": "ok",  # Could add actual memory check
-            }
+            },
         }
-        
+
         # Check if any critical services are down
-        critical_failures = [k for k, v in health_status["checks"].items() 
-                           if v == "error" and k in ["data_dir", "cli_binary"]]
-        
+        critical_failures = [
+            k
+            for k, v in health_status["checks"].items()
+            if v == "error" and k in ["data_dir", "cli_binary"]
+        ]
+
         if critical_failures:
             health_status["status"] = "unhealthy"
             return JSONResponse(health_status, status_code=503)
-        
+
         # Check for warnings
         warnings = [k for k, v in health_status["checks"].items() if v == "warning"]
         if warnings:
             health_status["status"] = "degraded"
-        
+
         return health_status
-        
+
     except Exception as e:
         logger.error(f"Health check failed: {e}")
-        return JSONResponse({
-            "status": "unhealthy",
-            "timestamp": datetime.now(UTC).isoformat(),
-            "error": str(e)
-        }, status_code=503)
+        return JSONResponse(
+            {
+                "status": "unhealthy",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "error": str(e),
+            },
+            status_code=503,
+        )
 
 
 @app.get("/status")
@@ -672,9 +673,7 @@ async def status():
     return {
         "last_update": last_update,
         "next_run": (
-            app.state.scheduler_next_run
-            if hasattr(app.state, "scheduler_next_run")
-            else None
+            app.state.scheduler_next_run if hasattr(app.state, "scheduler_next_run") else None
         ),
         "cron": cron,
         "cli_version": cli_version,
@@ -693,9 +692,7 @@ async def get_m3u():
         return Response(M3U_PATH.read_bytes(), media_type=MIME_M3U)
     except Exception as e:
         logger.error(f"Failed to read M3U file: {e}")
-        raise HTTPException(
-            status_code=500, detail="Failed to read M3U file"
-        ) from e
+        raise HTTPException(status_code=500, detail="Failed to read M3U file") from e
 
 
 @app.get("/m3u/stream-codes/{stream_code}")
@@ -722,9 +719,7 @@ async def get_m3u_with_stream_code(stream_code: str):
         return Response("\n".join(lines), media_type=MIME_M3U)
     except Exception as e:
         logger.error(f"Failed to process M3U with stream code: {e}")
-        raise HTTPException(
-            status_code=500, detail="Failed to process M3U file"
-        ) from e
+        raise HTTPException(status_code=500, detail="Failed to process M3U file") from e
 
 
 @app.get("/xml")
@@ -772,9 +767,7 @@ async def xtreme_player_api(
             )
             return JSONResponse({"user_info": {"auth": 0}}, status_code=401)
     except HTTPException as e:
-        logger.warning(
-            f"Credential validation failed from {request.client.host}: {e.detail}"
-        )
+        logger.warning(f"Credential validation failed from {request.client.host}: {e.detail}")
         return JSONResponse({"user_info": {"auth": 0}}, status_code=401)
 
     request.state.username = username
@@ -782,9 +775,7 @@ async def xtreme_player_api(
     logger.info(f"Successful authentication for user {username}")
 
     if action == "get_live_categories":
-        return JSONResponse(
-            [{"category_id": "1", "category_name": "Toonami", "parent_id": 0}]
-        )
+        return JSONResponse([{"category_id": "1", "category_name": "Toonami", "parent_id": 0}])
 
     if action == "get_live_streams":
         channels = parse_channels_from_m3u()
@@ -828,14 +819,10 @@ async def xtreme_get(
     try:
         username, password = validate_credentials(username, password)
         if not verify_credentials(username, password):
-            logger.warning(
-                f"Invalid credentials for M3U request from {request.client.host}"
-            )
+            logger.warning(f"Invalid credentials for M3U request from {request.client.host}")
             return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
     except HTTPException as e:
-        logger.warning(
-            f"M3U request validation failed from {request.client.host}: {e.detail}"
-        )
+        logger.warning(f"M3U request validation failed from {request.client.host}: {e.detail}")
         return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
 
     channels = parse_channels_from_m3u()
@@ -853,9 +840,7 @@ async def xtreme_xmltv(
     try:
         username, password = validate_credentials(username, password)
         if not verify_credentials(username, password):
-            logger.warning(
-                f"Invalid credentials for XMLTV request from {request.client.host}"
-            )
+            logger.warning(f"Invalid credentials for XMLTV request from {request.client.host}")
             return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
     except HTTPException as e:
         logger.warning(
@@ -890,10 +875,7 @@ async def xtreme_stream(
     # Find the actual stream URL
     channels = parse_channels_from_m3u()
     for ch in channels:
-        if (
-            ch.get("id") == stream_id
-            or str(ch.get("id", "")).replace(".", "_") == stream_id
-        ):
+        if ch.get("id") == stream_id or str(ch.get("id", "")).replace(".", "_") == stream_id:
             stream_url = ch.get("url", "")
             if stream_url:
                 logger.info(f"Stream redirect for {stream_id} to user {username}")
@@ -1145,9 +1127,7 @@ async def scheduler_loop():
                 # Fallback if cron calculation fails
                 delay = 3600  # 1 hour fallback
                 app.state.scheduler_next_run = None
-                logger.warning(
-                    "Could not calculate next run time, using 1-hour fallback"
-                )
+                logger.warning("Could not calculate next run time, using 1-hour fallback")
 
             # Wait for scheduled time
             await asyncio.sleep(delay)
@@ -1170,9 +1150,7 @@ async def scheduler_loop():
             )
 
             if consecutive_failures >= max_consecutive_failures:
-                logger.critical(
-                    "Maximum consecutive failures reached, extending retry delay"
-                )
+                logger.critical("Maximum consecutive failures reached, extending retry delay")
                 await asyncio.sleep(300)  # 5 minute delay after multiple failures
             else:
                 await asyncio.sleep(30)  # 30 second delay for single failures
@@ -1193,9 +1171,7 @@ async def on_startup():
     try:
         created_at = datetime.fromisoformat(creds.get("created_at", ""))
         time_since_creation = datetime.now(UTC) - created_at
-        created_recently = (
-            time_since_creation.total_seconds() < 60
-        )  # Created in last minute
+        created_recently = time_since_creation.total_seconds() < 60  # Created in last minute
     except Exception:
         pass
 

@@ -27,7 +27,9 @@ function announceToScreenReader(message) {
 }
 
 function setLoadingState(element, isLoading = true) {
-  if (!element) {return;}
+  if (!element) {
+    return;
+  }
 
   if (isLoading) {
     element.setAttribute('aria-busy', 'true');
@@ -112,7 +114,9 @@ function showNotification(message, type = 'info') {
 // Robust clipboard helper: tries navigator.clipboard in secure contexts,
 // falls back to a hidden textarea + execCommand('copy') for HTTP or older browsers.
 async function copyTextToClipboard(text) {
-  if (!text && text !== '') {throw new Error('No text to copy');}
+  if (!text && text !== '') {
+    throw new Error('No text to copy');
+  }
   try {
     if (navigator.clipboard && window.isSecureContext) {
       await navigator.clipboard.writeText(text);
@@ -207,7 +211,9 @@ function setOnline(isOnline) {
 }
 
 function formatDate(ts) {
-  if (!ts) {return '—';}
+  if (!ts) {
+    return '—';
+  }
   try {
     const date = new Date(ts);
     return isNaN(date.getTime()) ? String(ts) : date.toLocaleString();
@@ -232,13 +238,38 @@ async function loadStatus() {
       ? '✓ Available'
       : 'Not available';
 
-    quickStats.innerHTML = `
-      <div class="meta">
-        <div>Channels: <strong>${data.channel_count ?? '—'}</strong></div>
-        <div>Schedule: <code>${data.cron ?? '—'}</code></div>
-        <div>CLI version: <code>${data.cli_version ?? '—'}</code></div>
-        <div>Stream endpoints: <code>${streamEndpoints}</code></div>
-      </div>`;
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+
+    const channelsRow = document.createElement('div');
+    channelsRow.appendChild(document.createTextNode('Channels: '));
+    const channelsStrong = document.createElement('strong');
+    channelsStrong.textContent = String(data.channel_count ?? '—');
+    channelsRow.appendChild(channelsStrong);
+    meta.appendChild(channelsRow);
+
+    const scheduleRow = document.createElement('div');
+    scheduleRow.appendChild(document.createTextNode('Schedule: '));
+    const scheduleCode = document.createElement('code');
+    scheduleCode.textContent = String(data.cron ?? '—');
+    scheduleRow.appendChild(scheduleCode);
+    meta.appendChild(scheduleRow);
+
+    const cliRow = document.createElement('div');
+    cliRow.appendChild(document.createTextNode('CLI version: '));
+    const cliCode = document.createElement('code');
+    cliCode.textContent = String(data.cli_version ?? '—');
+    cliRow.appendChild(cliCode);
+    meta.appendChild(cliRow);
+
+    const streamRow = document.createElement('div');
+    streamRow.appendChild(document.createTextNode('Stream endpoints: '));
+    const streamCode = document.createElement('code');
+    streamCode.textContent = streamEndpoints;
+    streamRow.appendChild(streamCode);
+    meta.appendChild(streamRow);
+
+    quickStats.replaceChildren(meta);
 
     announceToScreenReader(`Status updated. ${data.channel_count || 0} channels available.`);
   } catch (error) {
@@ -270,20 +301,21 @@ async function loadChannels() {
       const row = document.createElement('div');
       row.className = 'row';
       row.setAttribute('role', 'listitem');
-      // Escape HTML to prevent XSS
-      const safeName = (c.name || '').replace(/[<>&"]/g, match => {
-        const entities = {
-          '<': '&lt;',
-          '>': '&gt;',
-          '&': '&amp;',
-          '"': '&quot;',
-        };
-        return entities[match];
-      });
-      row.innerHTML = `
-        <div class="ch">${c.number ?? '—'}</div>
-        <div class="name" title="${safeName}">${safeName}</div>
-        <div class="badge">${c.id ?? 'ta'}</div>`;
+      const channelNumber = document.createElement('div');
+      channelNumber.className = 'ch';
+      channelNumber.textContent = String(c.number ?? '—');
+      row.appendChild(channelNumber);
+
+      const channelName = document.createElement('div');
+      channelName.className = 'name';
+      channelName.textContent = String(c.name ?? '');
+      channelName.title = String(c.name ?? '');
+      row.appendChild(channelName);
+
+      const channelBadge = document.createElement('div');
+      channelBadge.className = 'badge';
+      channelBadge.textContent = String(c.id ?? 'ta');
+      row.appendChild(channelBadge);
       channelsEl.appendChild(row);
     });
 
@@ -345,8 +377,12 @@ async function loadCredentials() {
       const userLoadingSpan = xtremeUser.querySelector('.loading-indicator');
       const passLoadingSpan = xtremePass.querySelector('.loading-indicator');
 
-      if (userLoadingSpan) {userLoadingSpan.remove();}
-      if (passLoadingSpan) {passLoadingSpan.remove();}
+      if (userLoadingSpan) {
+        userLoadingSpan.remove();
+      }
+      if (passLoadingSpan) {
+        passLoadingSpan.remove();
+      }
 
       xtremeUser.textContent = data.username;
       xtremePass.textContent = data.password;
@@ -355,8 +391,12 @@ async function loadCredentials() {
       if (data.direct_urls) {
         const xtremeM3uUrl = byId('xtreme-m3u-url');
         const xtremeXmlUrl = byId('xtreme-xml-url');
-        if (xtremeM3uUrl) {xtremeM3uUrl.textContent = data.direct_urls.xtreme_m3u;}
-        if (xtremeXmlUrl) {xtremeXmlUrl.textContent = data.direct_urls.xtreme_xml;}
+        if (xtremeM3uUrl) {
+          xtremeM3uUrl.textContent = data.direct_urls.xtreme_m3u;
+        }
+        if (xtremeXmlUrl) {
+          xtremeXmlUrl.textContent = data.direct_urls.xtreme_xml;
+        }
       }
 
       // Show creation info if available
@@ -398,13 +438,30 @@ async function loadStreamCodes() {
         Object.entries(data.stream_code_urls).forEach(([code, url]) => {
           const div = document.createElement('div');
           div.className = 'url-item';
-          div.innerHTML = `
-            <label>${code.toUpperCase()}:</label>
-            <code class="url-display" aria-label="Stream URL for ${code}">${url}</code>
-            <button type="button" class="btn-sm copy-url" data-url="${url}" aria-label="Copy ${code} URL">
-              <span aria-hidden="true">📋</span> Copy
-            </button>
-          `;
+
+          const labelEl = document.createElement('label');
+          labelEl.textContent = `${String(code).toUpperCase()}:`;
+          div.appendChild(labelEl);
+
+          const codeEl = document.createElement('code');
+          codeEl.className = 'url-display';
+          codeEl.setAttribute('aria-label', `Stream URL for ${String(code)}`);
+          codeEl.textContent = String(url);
+          div.appendChild(codeEl);
+
+          const buttonEl = document.createElement('button');
+          buttonEl.type = 'button';
+          buttonEl.className = 'btn-sm copy-url';
+          buttonEl.dataset.url = String(url);
+          buttonEl.setAttribute('aria-label', `Copy ${String(code)} URL`);
+
+          const iconSpan = document.createElement('span');
+          iconSpan.setAttribute('aria-hidden', 'true');
+          iconSpan.textContent = '📋';
+          buttonEl.appendChild(iconSpan);
+          buttonEl.appendChild(document.createTextNode(' Copy'));
+
+          div.appendChild(buttonEl);
           container.appendChild(div);
         });
 
@@ -550,7 +607,9 @@ document.querySelectorAll('.copy-inline').forEach(btn => {
     } else if (el && el.textContent) {
       text = el.textContent;
     }
-    if (!text) {return;}
+    if (!text) {
+      return;
+    }
     const ok = await copyTextToClipboard(text);
     const prev = btn.innerHTML;
     btn.innerHTML = ok ? '<span aria-hidden="true">✓</span> Copied!' : '<span aria-hidden="true">⌗</span> Select+Copy';
@@ -569,7 +628,9 @@ document.querySelectorAll('.copy-inline').forEach(btn => {
 // Logo overlay fallback: if local PNG missing, swap to remote reference image
 window.addEventListener('DOMContentLoaded', () => {
   const overlay = document.querySelector('.logo .logo-inc');
-  if (!overlay) {return;}
+  if (!overlay) {
+    return;
+  }
   const img = new Image();
   img.onload = () => {
     /* local asset exists, nothing to do */
