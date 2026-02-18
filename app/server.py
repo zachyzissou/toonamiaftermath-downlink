@@ -1421,9 +1421,9 @@ async def scheduler_loop():
 
 @app.on_event("startup")
 async def on_startup():
-    app.state.scheduler_task = asyncio.create_task(scheduler_loop())
     # Initialize credentials on startup
     creds = load_or_create_credentials()
+    app.state.scheduler_task = asyncio.create_task(scheduler_loop())
     logger.info("Xtreme Codes API credentials ready")
     logger.info(f"Username: {creds.get('username')}")
     logger.info(f"Toonami Aftermath: Downlink running on http://localhost:{PORT}")
