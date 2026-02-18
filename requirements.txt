@@ -8,4 +8,4 @@ ruff==0.6.9
 black==24.10.0
 
 # Performance middleware
-python-multipart==0.0.10
+python-multipart==0.0.22
