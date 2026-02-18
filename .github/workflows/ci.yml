@@ -1,0 +1,205 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+
+name: Continuous Integration
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch: {}
+
+jobs:
+  lint-and-format:
+    name: Code Quality
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff black
+          pip install -r requirements.txt
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Lint Python code (Ruff)
+        run: ruff check .
+
+      - name: Check Python formatting (Black)
+        run: black --check .
+
+      - name: Lint JavaScript code
+        run: npm run lint:js
+
+      - name: Lint Markdown files
+        run: npm run lint:md
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.11', '3.12']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run core logic tests
+        run: python test_logic.py
+
+      - name: Run integration tests
+        run: python test_integration.py
+
+      - name: Run frontend tests
+        run: python test_frontend.py
+
+      - name: Test Docker build
+        run: |
+          docker build -t toonami-downlink:test .
+          docker run --rm -d --name test-container -p 7005:7004 toonami-downlink:test
+          sleep 10
+          curl -f http://localhost:7005/health || exit 1
+          docker stop test-container
+
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install safety bandit
+          pip install -r requirements.txt
+
+      - name: Check for security vulnerabilities in dependencies
+        run: safety check --json || true
+
+      - name: Run Bandit security scanner
+        run: bandit -r app/ -f json || true
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install Node.js dependencies
+        run: npm ci
+
+      - name: Audit Node.js dependencies
+        run: npm audit --audit-level=moderate || true
+
+  performance:
+    name: Performance Tests
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install locust
+
+      - name: Start application
+        run: |
+          python run_dev.py &
+          sleep 10
+
+      - name: Run basic performance test
+        run: |
+          # Simple load test to ensure basic performance
+          for i in {1..10}; do
+            curl -f http://localhost:7005/status || exit 1
+            curl -f http://localhost:7005/channels || exit 1
+            # /health may return 503 when initial generation fails in CI environments.
+            curl -sS http://localhost:7005/health >/dev/null || exit 1
+          done
+          echo "✅ Basic performance test passed"
+
+  compatibility:
+    name: Compatibility Check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ['3.11', '3.12']
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run core logic tests only
+        run: python test_logic.py
+
+  build-info:
+    name: Build Information
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Display build context
+        run: |
+          echo "## Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch:** ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit:** ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Event:** ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Actor:** ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Timestamp:** $(date -u)" >> $GITHUB_STEP_SUMMARY
+          
+      - name: Check Docker context size
+        run: |
+          echo "## Docker Build Context" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          du -sh . >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY

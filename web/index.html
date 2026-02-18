@@ -3,16 +3,33 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Lightweight containerized application that fetches Toonami Aftermath channels and generates M3U and XMLTV files for IPTV players" />
+  <meta name="theme-color" content="#00e5ff" />
+  
+  <!-- Better performance and layout stability -->
+  <meta name="color-scheme" content="dark" />
+  <meta name="format-detection" content="telephone=no" />
+  
   <title>Toonami Aftermath: Downlink</title>
+  
+  <!-- Optimized icon loading -->
   <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/assets/favicon.svg" />
+  
+  <!-- Preload critical resources -->
+  <link rel="preload" href="/assets/style.css" as="style" />
+  <link rel="preload" href="/assets/app.js" as="script" />
+  
+  <!-- Stylesheet with optimized loading -->
   <link rel="stylesheet" href="/assets/style.css">
 </head>
 <body>
-  <div class="wrap">
+  <a href="#main-content" class="skip-link">Skip to main content</a>
+  <main id="main-content" class="wrap">
     <header>
   <div class="logo">
-  <img class="logo-base" src="/assets/logo.svg" alt="Downlink Logo" />
-  <img class="logo-inc" src="/assets/ta-ref.png" alt="Reference mark" />
+  <img class="logo-base" src="/assets/logo.svg" alt="Downlink Logo" width="64" height="64" />
+  <img class="logo-inc" src="/assets/ta-ref.png" alt="Toonami Aftermath reference mark" width="16" height="16" loading="lazy" />
   </div>
       <div class="title">
         <h1>Toonami Aftermath: Downlink</h1>
@@ -23,35 +40,50 @@
     <div class="grid">
       <section class="card">
         <h2>Feeds</h2>
-        <div class="meta">
-          <div class="dot" id="status-dot"></div>
-          <div>Last update: <span id="last-update">—</span></div>
-          <div>Next scheduled: <span id="next-run">—</span></div>
+        <div class="meta" role="status">
+          <div class="dot" id="status-dot" aria-hidden="true"></div>
+          <div>Last update: <span id="last-update" aria-live="polite">—</span></div>
+          <div>Next scheduled: <span id="next-run" aria-live="polite">—</span></div>
         </div>
         <div class="actions">
-          <a class="btn" href="/m3u" download>⤓ Download M3U</a>
-          <a class="btn" href="/xml" download>⤓ Download XMLTV</a>
-          <button type="button" class="btn ghost" id="refresh">↻ Refresh now</button>
+          <a class="btn" href="/m3u" download aria-describedby="m3u-desc">⤓ Download M3U</a>
+          <a class="btn" href="/xml" download aria-describedby="xml-desc">⤓ Download XMLTV</a>
+          <button type="button" class="btn ghost" id="refresh" aria-describedby="refresh-desc">
+            <span aria-hidden="true">↻</span> Refresh now
+          </button>
         </div>
-        <div class="list mt-12" id="quick-stats" aria-live="polite"></div>
+        <!-- Screen reader descriptions -->
+        <div id="m3u-desc" class="sr-only">Download M3U playlist file for IPTV players</div>
+        <div id="xml-desc" class="sr-only">Download XMLTV electronic program guide file</div>
+        <div id="refresh-desc" class="sr-only">Manually trigger channel data refresh</div>
+        
+        <div class="list mt-12" id="quick-stats" aria-live="polite" aria-label="Channel statistics"></div>
       </section>
 
       <aside class="card">
         <h2>IPTV Setup</h2>
         
-        <div class="tabs">
-          <button type="button" class="tab-btn" data-tab="xtreme">Xtreme Codes API</button>
-          <button type="button" class="tab-btn active" data-tab="direct">Direct URLs</button>
+        <div class="tabs" role="tablist" aria-label="Setup methods">
+          <button type="button" class="tab-btn" data-tab="xtreme" role="tab" aria-selected="false" aria-controls="tab-xtreme" id="tab-btn-xtreme">Xtreme Codes API</button>
+          <button type="button" class="tab-btn active" data-tab="direct" role="tab" aria-selected="true" aria-controls="tab-direct" id="tab-btn-direct">Direct URLs</button>
         </div>
         
-        <div class="tab-content hidden" id="tab-xtreme">
+        <div class="tab-content hidden" id="tab-xtreme" role="tabpanel" aria-labelledby="tab-btn-xtreme">
           <div class="mb-10 muted">These credentials were auto-generated on first launch:</div>
-          <div class="grid-col">
-            <div><strong>Server:</strong> <code id="xtreme-url"></code></div>
-            <div><strong>Username:</strong> <code id="xtreme-user">Loading...</code></div>
-            <div><strong>Password:</strong> <code id="xtreme-pass">Loading...</code></div>
+          <div class="grid-col" role="group" aria-label="Xtreme Codes credentials">
+            <div><strong>Server:</strong> <code id="xtreme-url" aria-label="Server URL"></code></div>
+            <div><strong>Username:</strong> <code id="xtreme-user" aria-label="Username">
+              <span class="loading-indicator" aria-hidden="true">Loading...</span>
+            </code></div>
+            <div><strong>Password:</strong> <code id="xtreme-pass" aria-label="Password">
+              <span class="loading-indicator" aria-hidden="true">Loading...</span>
+            </code></div>
           </div>
-          <button type="button" class="btn ghost mt-12" id="copy-xtreme">📋 Copy credentials</button>
+          <button type="button" class="btn ghost mt-12" id="copy-xtreme" aria-describedby="copy-xtreme-desc">
+            <span aria-hidden="true">📋</span> Copy credentials
+          </button>
+          <div id="copy-xtreme-desc" class="sr-only">Copy all Xtreme Codes credentials to clipboard</div>
+          
           <div class="setup-guide mt-12">
             <details>
               <summary>Popular IPTV Player Setup</summary>
@@ -70,38 +102,48 @@
           </div>
         </div>
         
-        <div class="tab-content" id="tab-direct">
+        <div class="tab-content" id="tab-direct" role="tabpanel" aria-labelledby="tab-btn-direct">
           <div class="mb-10 muted">Use these endpoints directly:</div>
-          <div class="grid-col">
+          <div class="grid-col" role="group" aria-label="Direct URLs">
             <div>
               <strong>M3U (Standard):</strong>
-              <code id="m3u-url"></code>
-              <button type="button" class="btn-sm copy-inline" data-target="m3u-url">📋 Copy</button>
+              <code id="m3u-url" aria-label="M3U URL"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="m3u-url" aria-label="Copy M3U URL">
+                <span aria-hidden="true">📋</span> Copy
+              </button>
             </div>
             <div>
               <strong>XMLTV:</strong>
-              <code id="xml-url"></code>
-              <button type="button" class="btn-sm copy-inline" data-target="xml-url">📋 Copy</button>
+              <code id="xml-url" aria-label="XMLTV URL"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="xml-url" aria-label="Copy XMLTV URL">
+                <span aria-hidden="true">📋</span> Copy
+              </button>
             </div>
             <div>
               <strong>Xtreme M3U:</strong>
-              <code id="xtreme-m3u-url"></code>
-              <button type="button" class="btn-sm copy-inline" data-target="xtreme-m3u-url">📋 Copy</button>
+              <code id="xtreme-m3u-url" aria-label="Xtreme M3U URL"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="xtreme-m3u-url" aria-label="Copy Xtreme M3U URL">
+                <span aria-hidden="true">📋</span> Copy
+              </button>
             </div>
             <div>
               <strong>Xtreme XML:</strong>
-              <code id="xtreme-xml-url"></code>
-              <button type="button" class="btn-sm copy-inline" data-target="xtreme-xml-url">📋 Copy</button>
+              <code id="xtreme-xml-url" aria-label="Xtreme XML URL"></code>
+              <button type="button" class="btn-sm copy-inline" data-target="xtreme-xml-url" aria-label="Copy Xtreme XML URL">
+                <span aria-hidden="true">📋</span> Copy
+              </button>
             </div>
           </div>
           
           <div class="mt-16">
             <h4>Ready-to-Use Stream Code URLs:</h4>
             <div class="mb-6 muted">Copy these URLs directly - no setup required!</div>
-            <div id="stream-codes-list" class="stream-codes-container">
+            <div id="stream-codes-list" class="stream-codes-container" role="group" aria-label="Stream code URLs">
               <div class="url-item">
-                <span class="url-label">Loading...</span>
-                <code class="url-display">—</code>
+                <span class="url-label">
+                  <span class="loading-indicator" aria-hidden="true">Loading...</span>
+                </span>
+                <code class="url-display" aria-label="Stream URL">—</code>
               </div>
             </div>
           </div>
@@ -109,28 +151,30 @@
         
         <details class="mt-12">
           <summary>FFmpeg Settings</summary>
-          <pre class="ffmpeg">-hide_banner -loglevel info -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 8000000 -analyzeduration 1M -probesize 1M -i [URL] -vf scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p -c:v h264_nvenc -preset p4 -b:v 4M -maxrate 5M -bufsize 8M -g 60 -keyint_min 60 -rc vbr_hq -bf 0 -c:a ac3 -ar 48000 -ac 2 -b:a 192k -af aresample=async=1:first_pts=0 -f mpegts -mpegts_flags +resend_headers -flush_packets 1 -muxpreload 0 -muxdelay 0 pipe:1</pre>
+          <pre class="ffmpeg" role="img" aria-label="FFmpeg command line settings">-hide_banner -loglevel info -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 8000000 -analyzeduration 1M -probesize 1M -i [URL] -vf scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p -c:v h264_nvenc -preset p4 -b:v 4M -maxrate 5M -bufsize 8M -g 60 -keyint_min 60 -rc vbr_hq -bf 0 -c:a ac3 -ar 48000 -ac 2 -b:a 192k -af aresample=async=1:first_pts=0 -f mpegts -mpegts_flags +resend_headers -flush_packets 1 -muxpreload 0 -muxdelay 0 pipe:1</pre>
         </details>
       </aside>
     </div>
 
     <section class="card mt-18">
       <h2>Channels</h2>
-      <div class="list" id="channels">
-        <div class="row" aria-hidden="true">
+      <div class="list" id="channels" role="group" aria-label="Available channels">
+        <div class="row loading-placeholder" aria-hidden="true">
           <div class="ch">—</div>
-          <div class="name">Loading…</div>
+          <div class="name">
+            <span class="loading-indicator">Loading…</span>
+          </div>
           <div class="badge">—</div>
         </div>
       </div>
     </section>
 
     <footer>
-      <div>Running <strong>Downlink</strong> • Status: <span id="status-text">Unknown</span></div>
+      <div>Running <strong>Downlink</strong> • Status: <span id="status-text" aria-live="polite">Unknown</span></div>
       <div>API: <code>/status</code> <code>/channels</code> <code>/m3u</code> <code>/xml</code></div>
       <div><a href="https://github.com/chris102994/toonamiaftermath-cli" target="_blank" rel="noopener" class="powered-link">Powered by toonamiaftermath-cli</a></div>
     </footer>
-  </div>
+  </main>
 
   <script src="/assets/app.js"></script>
 </body>
