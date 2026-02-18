@@ -983,7 +983,7 @@ async def rotate_xtreme_credentials(request: Request, payload: CredentialsRotate
     try:
         rotated = rotate_credentials(payload.new_password)
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     host = request.headers.get("host", "localhost:7004")
     protocol = "https" if request.url.scheme == "https" else "http"
