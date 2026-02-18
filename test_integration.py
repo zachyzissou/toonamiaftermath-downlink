@@ -1,155 +1,163 @@
-#!/usr/bin/env python3
-"""
-Integration tests for Toonami Aftermath Downlink API endpoints.
-Basic tests to ensure the API responds correctly to requests.
-"""
-
+import importlib
+import json
 import sys
-import asyncio
-import tempfile
-import shutil
+import time
 from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
-# Add app directory to path
-sys.path.insert(0, str(Path(__file__).parent / "app"))
 
-# Set up test environment
-import os
-os.environ["DATA_DIR"] = tempfile.mkdtemp()
-os.environ["WEB_DIR"] = str(Path(__file__).parent / "web")
+def _reset_modules() -> None:
+    for name in ("app.server", "app.xtreme_codes"):
+        if name in sys.modules:
+            del sys.modules[name]
 
-from app.server import app
 
-def test_api_endpoints():
-    """Test basic API endpoints."""
-    print("🧪 Testing API endpoints...")
-    
-    with TestClient(app) as client:
-        # Test status endpoint
-        response = client.get("/status")
-        assert response.status_code == 200, f"Status endpoint failed: {response.status_code}"
-        data = response.json()
-        assert "channel_count" in data
-        assert "cron" in data
-        print("✅ Status endpoint working")
-        
-        # Test channels endpoint
-        response = client.get("/channels")
-        assert response.status_code == 200, f"Channels endpoint failed: {response.status_code}"
-        channels = response.json()
-        assert isinstance(channels, list)
-        print("✅ Channels endpoint working")
-        
-        # Test credentials endpoint
-        response = client.get("/credentials")
-        assert response.status_code == 200, f"Credentials endpoint failed: {response.status_code}"
-        creds = response.json()
-        assert "username" in creds
-        assert "server_url" in creds
-        print("✅ Credentials endpoint working")
-        
-        # Test M3U endpoint (should fail with 404 since no files generated)
-        response = client.get("/m3u")
-        assert response.status_code == 404, f"M3U endpoint should return 404: {response.status_code}"
-        print("✅ M3U endpoint properly returns 404 when no file exists")
-        
-        # Test stream code validation
-        response = client.get("/m3u/stream-codes/test_code")
-        assert response.status_code == 404, f"Stream code endpoint should return 404: {response.status_code}"
-        print("✅ Stream code endpoint working")
-        
-        # Test invalid stream code
-        response = client.get("/m3u/stream-codes/invalid@code")
-        assert response.status_code == 400, f"Invalid stream code should return 400: {response.status_code}"
-        print("✅ Stream code validation working")
+@pytest.fixture
+def app_client(monkeypatch, tmp_path):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
 
-def test_xtreme_codes_api():
-    """Test Xtreme Codes API endpoints."""
-    print("\n🔐 Testing Xtreme Codes API...")
-    
-    with TestClient(app) as client:
-        # Test without credentials
-        response = client.get("/player_api.php")
-        assert response.status_code == 401, f"No auth should return 401: {response.status_code}"
-        print("✅ Authentication required for Xtreme Codes API")
-        
-        # Test with invalid credentials
-        response = client.get("/player_api.php?username=invalid&password=invalid")
-        assert response.status_code == 401, f"Invalid auth should return 401: {response.status_code}"
-        print("✅ Invalid credentials properly rejected")
-        
-        # Get valid credentials from the system
-        creds_response = client.get("/credentials")
-        creds = creds_response.json()
-        username = creds["username"]
-        password = creds.get("password", "test_password")  # Fallback for existing installs
-        
-        if password and password != "********":
-            # Test with valid credentials
-            response = client.get(f"/player_api.php?username={username}&password={password}")
-            assert response.status_code == 200, f"Valid auth should work: {response.status_code}"
-            data = response.json()
-            assert "user_info" in data
-            assert data["user_info"]["auth"] == 1
-            print("✅ Valid credentials accepted")
-        else:
-            print("⚠️  Skipping valid credential test (password not available)")
+    web_dir = Path(__file__).parent / "web"
+    monkeypatch.setenv("DATA_DIR", str(data_dir))
+    monkeypatch.setenv("WEB_DIR", str(web_dir))
+    monkeypatch.setenv("CRON_SCHEDULE", "0 3 * * *")
 
-def test_input_validation():
-    """Test input validation and security."""
-    print("\n🛡️  Testing input validation...")
-    
-    with TestClient(app) as client:
-        # Test overly long stream code
-        long_code = "a" * 100
-        response = client.get(f"/m3u/stream-codes/{long_code}")
-        assert response.status_code == 400, f"Long stream code should be rejected: {response.status_code}"
-        print("✅ Long stream codes properly rejected")
-        
-        # Test special characters in stream code
-        special_code = "test$%^&*"
-        response = client.get(f"/m3u/stream-codes/{special_code}")
-        assert response.status_code == 400, f"Special characters should be rejected: {response.status_code}"
-        print("✅ Invalid characters in stream codes rejected")
-        
-        # Test empty stream code
-        response = client.get("/m3u/stream-codes/")
-        assert response.status_code in [400, 404], f"Empty stream code should be rejected: {response.status_code}"
-        print("✅ Empty stream codes handled properly")
+    _reset_modules()
+    server = importlib.import_module("app.server")
 
-def cleanup():
-    """Clean up test data directory."""
-    data_dir = os.environ.get("DATA_DIR")
-    if data_dir and Path(data_dir).exists():
-        shutil.rmtree(data_dir)
-        print(f"🧹 Cleaned up test directory: {data_dir}")
+    async def scheduler_noop():
+        return
 
-def main():
-    """Run all integration tests."""
-    print("🚀 Toonami Aftermath: Downlink - Integration Tests")
-    print("=" * 60)
-    
-    try:
-        test_api_endpoints()
-        test_xtreme_codes_api()
-        test_input_validation()
-        
-        print("\n🎉 All integration tests passed!")
-        print("✅ API endpoints are working correctly")
-        print("✅ Authentication and authorization working")
-        print("✅ Input validation protecting against invalid inputs")
-        
-    except AssertionError as e:
-        print(f"\n❌ Test failed: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n💥 Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-    finally:
-        cleanup()
+    monkeypatch.setattr(server, "scheduler_loop", scheduler_noop)
 
-if __name__ == "__main__":
-    main()
+    with TestClient(server.app) as client:
+        yield client, server, data_dir
+
+
+def test_api_endpoints(app_client):
+    client, _, _ = app_client
+
+    response = client.get("/status")
+    assert response.status_code == 200
+    status_data = response.json()
+    assert "channel_count" in status_data
+    assert "cron" in status_data
+
+    response = client.get("/channels")
+    assert response.status_code == 200
+    channels = response.json()
+    assert isinstance(channels, list)
+
+    response = client.get("/credentials")
+    assert response.status_code == 200
+    creds = response.json()
+    assert "username" in creds
+    assert "server_url" in creds
+    assert "password_available" in creds
+
+    response = client.get("/m3u")
+    assert response.status_code == 404
+
+    response = client.get("/m3u/stream-codes/test_code")
+    assert response.status_code == 404
+
+    response = client.get("/m3u/stream-codes/invalid@code")
+    assert response.status_code == 400
+
+
+def test_xtreme_codes_auth_flow(app_client):
+    client, _, _ = app_client
+
+    response = client.get("/player_api.php")
+    assert response.status_code == 401
+
+    response = client.get("/player_api.php?username=invalid&password=invalid")
+    assert response.status_code == 401
+
+    creds = client.get("/credentials").json()
+    username = creds["username"]
+    password = creds.get("password")
+
+    assert password
+
+    response = client.get(f"/player_api.php?username={username}&password={password}")
+    assert response.status_code == 200
+    data = response.json()
+    assert "user_info" in data
+    assert data["user_info"]["auth"] == 1
+
+
+def test_rotate_credentials_with_recovery_code(app_client):
+    client, _, data_dir = app_client
+
+    creds = client.get("/credentials").json()
+    recovery_code = creds.get("recovery_code")
+    assert recovery_code
+
+    unauthorized = client.post("/credentials/rotate", json={})
+    assert unauthorized.status_code == 401
+
+    wrong_code = client.post(
+        "/credentials/rotate", json={"recovery_code": "not-correct"}
+    )
+    assert wrong_code.status_code == 401
+
+    rotate = client.post(
+        "/credentials/rotate",
+        json={"recovery_code": recovery_code, "new_password": "new-pass-1234"},
+    )
+    assert rotate.status_code == 200
+
+    rotated = rotate.json()
+    assert rotated["username"] == creds["username"]
+    assert rotated["password"] == "new-pass-1234"
+    assert rotated.get("recovery_code")
+
+    auth = client.get(
+        f"/player_api.php?username={rotated['username']}&password={rotated['password']}"
+    )
+    assert auth.status_code == 200
+
+    stored = json.loads((data_dir / "credentials.json").read_text())
+    assert "password_salt" in stored
+    assert stored.get("hash_algorithm") == "pbkdf2_sha256"
+
+
+def test_refresh_failure_path_surfaces_in_task(app_client, monkeypatch):
+    client, server, _ = app_client
+
+    async def fail_generate_files():
+        raise RuntimeError("forced-refresh-failure")
+
+    monkeypatch.setattr(server, "generate_files", fail_generate_files)
+
+    response = client.post("/refresh")
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+    task = None
+    for _ in range(50):
+        task = getattr(server.app.state, "last_refresh_task", None)
+        if task and task.done():
+            break
+        time.sleep(0.02)
+
+    assert task is not None
+    assert task.done() is True
+    assert isinstance(task.exception(), RuntimeError)
+
+
+def test_input_validation(app_client):
+    client, _, _ = app_client
+
+    long_code = "a" * 100
+    response = client.get(f"/m3u/stream-codes/{long_code}")
+    assert response.status_code == 400
+
+    response = client.get("/m3u/stream-codes/test$%^&*")
+    assert response.status_code == 400
+
+    response = client.get("/m3u/stream-codes/")
+    assert response.status_code in [400, 404]

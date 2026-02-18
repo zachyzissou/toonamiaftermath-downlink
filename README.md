@@ -107,10 +107,13 @@ Environment variables:
 # Run locally (requires Python 3.12+)
 python -m venv .venv
 . .venv/Scripts/Activate.ps1
-pip install fastapi uvicorn
+pip install -r requirements-dev.txt
 setx DATA_DIR "%CD%/data"
 setx WEB_DIR "%CD%/web"
 uvicorn app.server:create_app --reload --host 0.0.0.0 --port 7004
+
+# Run tests
+pytest -q
 ```
 
 ## Security & Authentication
@@ -120,6 +123,8 @@ uvicorn app.server:create_app --reload --host 0.0.0.0 --port 7004
 - **Automatic credential generation** - Unique Xtreme Codes username/password created on first launch
 - **Persistent credentials** - Stored in `/data/credentials.json` and retained across restarts  
 - **Easy access** - View credentials in WebUI or at `/credentials` endpoint
+- **Credential rotation** - Rotate credentials with `POST /credentials/rotate` using current credentials or recovery code
+- **Recovery file** - Recovery code stored in `/data/credentials.recovery` for password-loss recovery
 - **IPTV player guides** - Step-by-step setup instructions for popular players included
 
 ### Stream Code Support

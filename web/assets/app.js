@@ -220,7 +220,13 @@ async function loadCredentials(){
   const data = await fetchJSON('/credentials');
   if(data){
     xtremeUser.textContent = data.username;
-    xtremePass.textContent = data.password;
+    if (data.password_available && data.password) {
+      xtremePass.textContent = data.password;
+      xtremePass.removeAttribute('title');
+    } else {
+      xtremePass.textContent = 'Not currently displayed';
+      xtremePass.title = 'Rotate credentials via POST /credentials/rotate using current credentials or recovery code';
+    }
     
     // Update direct URLs with credentials
     if(data.direct_urls) {
