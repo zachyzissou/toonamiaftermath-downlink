@@ -91,6 +91,14 @@ def test_api_endpoints():
         assert response.status_code == 200, (
             f"Stream codes endpoint failed: {response.status_code}"
         )
+        stream_codes_data = response.json()
+        assert "stream_code_urls" in stream_codes_data
+        assert "credentials" in stream_codes_data
+        assert "username" in stream_codes_data["credentials"]
+        assert "password_available" in stream_codes_data["credentials"]
+        assert "password" in stream_codes_data["credentials"]
+        if stream_codes_data["credentials"]["password_available"]:
+            assert stream_codes_data["credentials"]["password"] is not None
         print("✅ Stream codes endpoint working")
 
 
