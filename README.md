@@ -209,3 +209,28 @@ MIT License - See [LICENSE](LICENSE) file
 - Files are generated on startup and then according to the cron schedule
 - The WebUI auto-refreshes status every 30 seconds
 - Not affiliated with Toonami, Adult Swim, or Warner Bros. Discovery
+
+### Updating the bundled CLI binary
+
+The Docker image pins the CLI version and checksum through build arguments in the Dockerfile:
+
+```dockerfile
+ARG TA_CLI_VERSION=v1.1.1
+ARG TA_CLI_ARCH=linux_amd64
+ARG TA_CLI_SHA256=...
+```
+
+To update the packaged binary:
+
+1. Set `TA_CLI_VERSION` to the target release tag (for example `v1.1.2`).
+2. Verify and set `TA_CLI_SHA256` to that release artifact’s SHA256 checksum.
+3. Rebuild the container image.
+
+```bash
+docker build \
+  --build-arg TA_CLI_VERSION=v1.1.2 \
+  --build-arg TA_CLI_SHA256=<new_checksum> \
+  -t toonamiaftermath:latest .
+```
+
+The build fails if the downloaded artifact checksum does not match.

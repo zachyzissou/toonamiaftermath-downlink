@@ -1,7 +1,9 @@
 FROM alpine:3.20 AS cli-fetch
 RUN apk add --no-cache wget
+ARG TA_CLI_VERSION=v1.1.1
+ARG TA_CLI_ARCH=linux_amd64
 ARG TA_CLI_SHA256=f8c047de5e2be82778a9e0cd3312024fbdaf5ed4adce27c550c1f48e0beb1306
-RUN wget -O /ta-cli https://github.com/chris102994/toonamiaftermath-cli/releases/download/v1.1.1/toonamiaftermath-cli_v1.1.1_linux_amd64 \
+RUN wget -O /ta-cli "https://github.com/chris102994/toonamiaftermath-cli/releases/download/${TA_CLI_VERSION}/toonamiaftermath-cli_${TA_CLI_VERSION}_${TA_CLI_ARCH}" \
     && echo "${TA_CLI_SHA256}  /ta-cli" | sha256sum -c - \
     && chmod +x /ta-cli
 
