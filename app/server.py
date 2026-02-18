@@ -21,15 +21,19 @@ from fastapi.responses import (
     RedirectResponse,
 )
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field
 from starlette.responses import Response as StarletteResponse
 
 from .xtreme_codes import (
     _credential_manager,
     format_xtreme_m3u,
     generate_short_epg,
+    get_recovery_file_path,
     get_server_info,
     load_or_create_credentials,
+    rotate_credentials,
     verify_credentials,
+    verify_recovery_code,
 )
 
 
@@ -81,11 +85,21 @@ MIME_XML = "application/xml"
 MSG_INVALID_CREDENTIALS = "Invalid credentials"
 MSG_M3U_NOT_FOUND = "M3U not yet generated"
 MSG_XML_NOT_FOUND = "XML not yet generated"
+MSG_ROTATE_AUTH_REQUIRED = "Provide valid credentials or recovery_code"
 
 # File paths
 M3U_PATH = DATA_DIR / "index.m3u"
 XML_PATH = DATA_DIR / "index.xml"
 STATE_PATH = DATA_DIR / "state.json"
+
+
+class CredentialsRotateRequest(BaseModel):
+    """Request body for rotating Xtreme credentials."""
+
+    username: str | None = Field(default=None, max_length=100)
+    password: str | None = Field(default=None, max_length=500)
+    recovery_code: str | None = Field(default=None, max_length=200)
+    new_password: str | None = Field(default=None, min_length=8, max_length=500)
 
 
 def sanitize_user_input(input_str: str, max_length: int = 100) -> str:
@@ -892,22 +906,34 @@ async def get_credentials(request: Request):
     host = request.headers.get("host", "localhost:7004")
     protocol = "https" if request.url.scheme == "https" else "http"
 
-    # Get password for display (only available for new installations)
-    display_password = _credential_manager.get_password_for_display()
-    if not display_password:
-        # For existing installations, password is not displayed for security
-        display_password = "********"
+    display_password = _credential_manager.pop_password_for_display()
+    display_recovery_code = _credential_manager.pop_recovery_code_for_display()
+    password_available = bool(display_password)
+    recovery_code_available = bool(display_recovery_code)
+
+    password_for_urls = display_password if password_available else "[PASSWORD]"
 
     return {
         "username": creds.get("username"),
         "password": display_password,
+        "password_available": password_available,
+        "recovery_code": display_recovery_code,
+        "recovery_code_available": recovery_code_available,
         "created_at": creds.get("created_at"),
         "installation_id": creds.get("installation_id"),
         "server_url": host,
         "instructions": (
-            "Use these credentials in your IPTV player's Xtreme Codes API settings"
+            "Use these credentials in your IPTV player's Xtreme Codes API settings. "
+            "If password is unavailable, rotate credentials via POST /credentials/rotate."
         ),
-        "security_note": "Password is only shown once after generation for security",
+        "security_note": (
+            "Password and recovery code are shown once. A recovery file is stored on disk "
+            "for secure rotation."
+        ),
+        "recovery": {
+            "file_path": Path(get_recovery_file_path()).name,
+            "rotate_endpoint": "/credentials/rotate",
+        },
         "setup_guide": {
             "tivimate": "Add M3U Playlist → Xtreme Codes → Enter server, username, password",
             "iptv_smarters": (
@@ -920,11 +946,67 @@ async def get_credentials(request: Request):
             "standard_xml": f"{protocol}://{host}/xml",
             "xtreme_m3u": (
                 f"{protocol}://{host}/get.php?username={creds.get('username')}"
-                f"&password={display_password if display_password != '********' else '[PASSWORD]'}"
+                f"&password={password_for_urls}"
             ),
             "xtreme_xml": (
                 f"{protocol}://{host}/xmltv.php?username={creds.get('username')}"
-                f"&password={display_password if display_password != '********' else '[PASSWORD]'}"
+                f"&password={password_for_urls}"
+            ),
+        },
+    }
+
+
+@app.post("/credentials/rotate")
+async def rotate_xtreme_credentials(request: Request, payload: CredentialsRotateRequest):
+    """
+    Rotate Xtreme credentials.
+
+    Authorization options:
+    1) Existing username/password pair
+    2) Recovery code from DATA_DIR/credentials.recovery
+    """
+    authorized = False
+
+    if payload.username and payload.password:
+        try:
+            username, password = validate_credentials(payload.username, payload.password)
+            authorized = verify_credentials(username, password)
+        except HTTPException:
+            authorized = False
+
+    if not authorized and payload.recovery_code:
+        authorized = verify_recovery_code(payload.recovery_code)
+
+    if not authorized:
+        raise HTTPException(status_code=401, detail=MSG_ROTATE_AUTH_REQUIRED)
+
+    try:
+        rotated = rotate_credentials(payload.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    host = request.headers.get("host", "localhost:7004")
+    protocol = "https" if request.url.scheme == "https" else "http"
+
+    response_password = _credential_manager.pop_password_for_display()
+    response_recovery_code = _credential_manager.pop_recovery_code_for_display()
+
+    return {
+        "username": rotated.get("username"),
+        "password": response_password,
+        "recovery_code": response_recovery_code,
+        "created_at": rotated.get("created_at"),
+        "installation_id": rotated.get("installation_id"),
+        "server_url": host,
+        "recovery_file": Path(get_recovery_file_path()).name,
+        "direct_urls": {
+            "xtreme_m3u": (
+                f"{protocol}://{host}/get.php?username={rotated.get('username')}"
+                f"&password={response_password}"
+            ),
+            "xtreme_xml": (
+                f"{protocol}://{host}/xmltv.php?username={rotated.get('username')}"
+                f"&password={response_password}"
             ),
         },
     }
