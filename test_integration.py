@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from fastapi.testclient import TestClient
 
@@ -139,6 +140,21 @@ def test_xtreme_codes_api():
             print("✅ Valid credentials accepted")
         else:
             print("⚠️  Skipping valid credential test (password not available)")
+
+        direct_urls = creds.get("direct_urls", {})
+        xtreme_m3u_url = direct_urls.get("xtreme_m3u", "")
+        if xtreme_m3u_url:
+            parsed = urlparse(xtreme_m3u_url)
+            qs = parse_qs(parsed.query)
+            token = qs.get("token", [None])[0]
+            assert "password=" not in xtreme_m3u_url
+            assert token is not None and token.strip()
+            response = client.get("/get.php", params={"username": username, "token": token})
+            assert response.status_code == 200, (
+                f"Valid token should return stream URL list: {response.status_code}"
+            )
+        else:
+            print("⚠️  Skipping token validation for Xtreme endpoints")
 
 
 def test_input_validation():

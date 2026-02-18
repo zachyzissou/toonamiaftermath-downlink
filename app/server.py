@@ -296,6 +296,31 @@ def _is_refresh_rate_limited() -> tuple[bool, float]:
     return False, 0.0
 
 
+def _get_credential_stream_token(creds: dict[str, Any]) -> str:
+    """Return the current stream token for a credential record."""
+    token = creds.get("stream_token")
+    if not token:
+        return "[REDACTED_STREAM_TOKEN]"
+    return str(token)
+
+
+def _verify_xtreme_access_token(username: str, token: str | None) -> bool:
+    """Verify a stream token or fallback to legacy password for Xtreme endpoints."""
+    if not token:
+        return False
+
+    try:
+        creds = load_or_create_credentials()
+    except Exception:
+        return False
+
+    if creds.get("username") != username:
+        return False
+
+    expected = creds.get("stream_token")
+    return secrets.compare_digest(str(expected), token) if expected else False
+
+
 def read_state() -> dict[str, Any]:
     """Read state from file with proper error handling."""
     if STATE_PATH.exists():
@@ -916,41 +941,63 @@ async def xtreme_get(
     request: Request,
     username: str = Query(None),
     password: str = Query(None),
+    token: str = Query(None),
     type_param: str = Query("m3u_plus", alias="type"),
     output_param: str = Query("ts", alias="output"),
 ):
     """Xtreme Codes get.php endpoint for M3U."""
     try:
-        username, password = validate_credentials(username, password)
-        if not verify_credentials(username, password):
-            logger.warning(f"Invalid credentials for M3U request from {request.client.host}")
-            return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
+        normalized_username = sanitize_user_input(username or "")
+        if not normalized_username or len(normalized_username) > 100:
+            raise HTTPException(status_code=400, detail="Username required")
+        username = normalized_username
     except HTTPException as e:
         logger.warning(f"M3U request validation failed from {request.client.host}: {e.detail}")
         return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
 
+    token_auth_ok = _verify_xtreme_access_token(username, token)
+    if not token_auth_ok:
+        try:
+            username, password = validate_credentials(username, password)
+            if not verify_credentials(username, password):
+                raise HTTPException(status_code=401, detail="Invalid credentials")
+        except HTTPException as e:
+            logger.warning(
+                f"M3U request validation failed from {request.client.host}: {e.detail}"
+            )
+            return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
+
     channels = parse_channels_from_m3u()
     host = request.headers.get("host", "localhost")
+    stream_token = load_or_create_credentials().get("stream_token")
+    if not stream_token:
+        raise HTTPException(status_code=500, detail="Stream token unavailable")
 
-    m3u_content = format_xtreme_m3u(channels, host, username, password)
+    m3u_content = format_xtreme_m3u(channels, host, username, stream_token)
     return Response(m3u_content, media_type=MIME_M3U)
 
 
 @app.get("/xmltv.php")
 async def xtreme_xmltv(
-    request: Request, username: str = Query(None), password: str = Query(None)
+    request: Request,
+    username: str = Query(None),
+    password: str = Query(None),
+    token: str = Query(None),
 ):
     """Xtreme Codes XMLTV endpoint."""
-    try:
-        username, password = validate_credentials(username, password)
-        if not verify_credentials(username, password):
-            logger.warning(f"Invalid credentials for XMLTV request from {request.client.host}")
+    if not _verify_xtreme_access_token(username or "", token):
+        try:
+            username, password = validate_credentials(username, password)
+            if not verify_credentials(username, password):
+                logger.warning(
+                    f"Invalid credentials for XMLTV request from {request.client.host}"
+                )
+                return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
+        except HTTPException as e:
+            logger.warning(
+                f"XMLTV request validation failed from {request.client.host}: {e.detail}"
+            )
             return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
-    except HTTPException as e:
-        logger.warning(
-            f"XMLTV request validation failed from {request.client.host}: {e.detail}"
-        )
-        return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
 
     if not XML_PATH.exists():
         raise HTTPException(status_code=404, detail="XML not yet generated")
@@ -963,18 +1010,19 @@ async def xtreme_stream(
     request: Request, username: str, password: str, stream_id: str, ext: str
 ):
     """Xtreme Codes live stream redirect."""
-    try:
-        username, password = validate_credentials(username, password)
-        if not verify_credentials(username, password):
+    if not _verify_xtreme_access_token(username, password):
+        try:
+            username, password = validate_credentials(username, password)
+            if not verify_credentials(username, password):
+                logger.warning(
+                    f"Invalid credentials for stream {stream_id} from {request.client.host}"
+                )
+                return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
+        except HTTPException as e:
             logger.warning(
-                f"Invalid credentials for stream {stream_id} from {request.client.host}"
+                f"Stream request validation failed from {request.client.host}: {e.detail}"
             )
             return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
-    except HTTPException as e:
-        logger.warning(
-            f"Stream request validation failed from {request.client.host}: {e.detail}"
-        )
-        return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
 
     # Find the actual stream URL
     channels = parse_channels_from_m3u()
@@ -1000,8 +1048,7 @@ async def get_credentials(request: Request):
     display_recovery_code = _credential_manager.pop_recovery_code_for_display()
     password_available = bool(display_password)
     recovery_code_available = bool(display_recovery_code)
-
-    password_for_urls = display_password if password_available else "[PASSWORD]"
+    stream_token = _get_credential_stream_token(creds)
 
     return {
         "username": creds.get("username"),
@@ -1036,11 +1083,11 @@ async def get_credentials(request: Request):
             "standard_xml": f"{protocol}://{host}/xml",
             "xtreme_m3u": (
                 f"{protocol}://{host}/get.php?username={creds.get('username')}"
-                f"&password={password_for_urls}"
+                f"&token={stream_token}"
             ),
             "xtreme_xml": (
                 f"{protocol}://{host}/xmltv.php?username={creds.get('username')}"
-                f"&password={password_for_urls}"
+                f"&token={stream_token}"
             ),
         },
     }
@@ -1092,11 +1139,11 @@ async def rotate_xtreme_credentials(request: Request, payload: CredentialsRotate
         "direct_urls": {
             "xtreme_m3u": (
                 f"{protocol}://{host}/get.php?username={rotated.get('username')}"
-                f"&password={response_password}"
+                f"&token={rotated.get('stream_token')}"
             ),
             "xtreme_xml": (
                 f"{protocol}://{host}/xmltv.php?username={rotated.get('username')}"
-                f"&password={response_password}"
+                f"&token={rotated.get('stream_token')}"
             ),
         },
     }
