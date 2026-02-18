@@ -52,6 +52,9 @@ def test_api_endpoints():
         creds = response.json()
         assert "username" in creds
         assert "server_url" in creds
+        assert "password_available" in creds
+        if creds["password_available"]:
+            assert creds["password"] is not None
         print("✅ Credentials endpoint working")
 
         # Test M3U endpoint (should fail with 404 since no files generated)

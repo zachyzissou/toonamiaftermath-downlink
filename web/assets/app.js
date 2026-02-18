@@ -385,7 +385,16 @@ async function loadCredentials() {
       }
 
       xtremeUser.textContent = data.username;
-      xtremePass.textContent = data.password;
+      const passwordText = data.password_available
+        ? data.password
+        : 'Password is not currently visible - rotate credentials for a new one.';
+      xtremePass.textContent = passwordText;
+
+      if (!data.password_available) {
+        xtremePass.classList.add('muted');
+      } else {
+        xtremePass.classList.remove('muted');
+      }
 
       // Update direct URLs with credentials
       if (data.direct_urls) {
