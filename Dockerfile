@@ -16,6 +16,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CRON_SCHEDULE="0 3 * * *"
 
 RUN apk add --no-cache bash ca-certificates gcompat libc6-compat libstdc++ tzdata
+RUN addgroup -S app && adduser -S app -G app -h /home/app
 
 WORKDIR /app
 
@@ -28,6 +29,11 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY app /app/app
 COPY web /web
 COPY --from=cli-fetch /ta-cli /usr/local/bin/toonamiaftermath-cli
+
+# Run as an unprivileged user
+RUN mkdir -p /data && \
+    chown -R app:app /app /data /web /usr/local/bin/toonamiaftermath-cli
+USER app
 
 # Add health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
