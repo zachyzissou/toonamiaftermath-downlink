@@ -45,9 +45,9 @@ def test_api_endpoints():
 
         # Test credentials endpoint
         response = client.get("/credentials")
-        assert (
-            response.status_code == 200
-        ), f"Credentials endpoint failed: {response.status_code}"
+        assert response.status_code == 200, (
+            f"Credentials endpoint failed: {response.status_code}"
+        )
         creds = response.json()
         assert "username" in creds
         assert "server_url" in creds
@@ -55,23 +55,23 @@ def test_api_endpoints():
 
         # Test M3U endpoint (should fail with 404 since no files generated)
         response = client.get("/m3u")
-        assert (
-            response.status_code == 404
-        ), f"M3U endpoint should return 404: {response.status_code}"
+        assert response.status_code == 404, (
+            f"M3U endpoint should return 404: {response.status_code}"
+        )
         print("✅ M3U endpoint properly returns 404 when no file exists")
 
         # Test stream code endpoint (should fail with 404 since no files generated)
         response = client.get("/m3u/stream-codes/test_code")
-        assert (
-            response.status_code == 404
-        ), f"Stream code endpoint should return 404: {response.status_code}"
+        assert response.status_code == 404, (
+            f"Stream code endpoint should return 404: {response.status_code}"
+        )
         print("✅ Stream code endpoint working")
 
         # Test invalid stream code
         response = client.get("/m3u/stream-codes/invalid@code")
-        assert (
-            response.status_code == 400
-        ), f"Invalid stream code should return 400: {response.status_code}"
+        assert response.status_code == 400, (
+            f"Invalid stream code should return 400: {response.status_code}"
+        )
         print("✅ Stream code validation working")
 
         # Test health endpoint
@@ -88,9 +88,9 @@ def test_api_endpoints():
 
         # Test stream codes endpoint
         response = client.get("/stream-codes")
-        assert (
-            response.status_code == 200
-        ), f"Stream codes endpoint failed: {response.status_code}"
+        assert response.status_code == 200, (
+            f"Stream codes endpoint failed: {response.status_code}"
+        )
         print("✅ Stream codes endpoint working")
 
 
@@ -101,16 +101,16 @@ def test_xtreme_codes_api():
     with TestClient(app) as client:
         # Test without credentials
         response = client.get("/player_api.php")
-        assert (
-            response.status_code == 401
-        ), f"No auth should return 401: {response.status_code}"
+        assert response.status_code == 401, (
+            f"No auth should return 401: {response.status_code}"
+        )
         print("✅ Authentication required for Xtreme Codes API")
 
         # Test with invalid credentials
         response = client.get("/player_api.php?username=invalid&password=invalid")
-        assert (
-            response.status_code == 401
-        ), f"Invalid auth should return 401: {response.status_code}"
+        assert response.status_code == 401, (
+            f"Invalid auth should return 401: {response.status_code}"
+        )
         print("✅ Invalid credentials properly rejected")
 
         # Get valid credentials from the system
@@ -122,9 +122,9 @@ def test_xtreme_codes_api():
         if password and password != "********":
             # Test with valid credentials
             response = client.get(f"/player_api.php?username={username}&password={password}")
-            assert (
-                response.status_code == 200
-            ), f"Valid auth should work: {response.status_code}"
+            assert response.status_code == 200, (
+                f"Valid auth should work: {response.status_code}"
+            )
             data = response.json()
             assert "user_info" in data
             assert data["user_info"]["auth"] == 1
@@ -141,17 +141,17 @@ def test_input_validation():
         # Test overly long stream code
         long_code = "a" * 100
         response = client.get(f"/m3u/stream-codes/{long_code}")
-        assert (
-            response.status_code == 400
-        ), f"Long stream code should be rejected: {response.status_code}"
+        assert response.status_code == 400, (
+            f"Long stream code should be rejected: {response.status_code}"
+        )
         print("✅ Long stream codes properly rejected")
 
         # Test special characters in stream code
         special_code = "test$%^&*"
         response = client.get(f"/m3u/stream-codes/{special_code}")
-        assert (
-            response.status_code == 400
-        ), f"Special characters should be rejected: {response.status_code}"
+        assert response.status_code == 400, (
+            f"Special characters should be rejected: {response.status_code}"
+        )
         print("✅ Invalid characters in stream codes rejected")
 
         # Test empty stream code
@@ -161,6 +161,16 @@ def test_input_validation():
             404,
         ], f"Empty stream code should be rejected: {response.status_code}"
         print("✅ Empty stream codes handled properly")
+
+
+def test_refresh_endpoint_requires_auth():
+    """Test refresh endpoint access control."""
+    with TestClient(app) as client:
+        response = client.post("/refresh")
+        assert response.status_code in {401, 429}, (
+            f"Refresh should be protected, got: {response.status_code}"
+        )
+        print("✅ Refresh endpoint is protected from anonymous access")
 
 
 def cleanup():
