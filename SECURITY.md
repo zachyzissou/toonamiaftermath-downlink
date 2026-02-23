@@ -5,7 +5,7 @@
 We currently support and patch security issues for the latest branch only unless otherwise noted in tags/releases.
 
 | Branch | Supported |
-|---|---|
+| --- | --- |
 | `main` | Yes |
 | `master` | Yes (legacy; migration candidate) |
 
@@ -17,7 +17,7 @@ If your repo uses a custom default branch, list it explicitly below:
 
 Please report security issues privately. **Do not open public issues** for sensitive details.
 
-- Email: `security@example.com`
+- Email: Use [GitHub Security Advisories](../../security/advisories/new) or DM `@zachyzissou`
 - Response time target: **72 hours** for initial acknowledgement
 - Disclosure timeline: coordinate with maintainer before public disclosure
 
