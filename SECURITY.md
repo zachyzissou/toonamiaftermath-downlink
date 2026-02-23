@@ -2,16 +2,11 @@
 
 ## Supported Versions
 
-We currently support and patch security issues for the latest branch only unless otherwise noted in tags/releases.
+We currently support and patch security issues for the default branch (`main`) and for active supported releases.
 
 | Branch | Supported |
 | --- | --- |
 | `main` | Yes |
-| `master` | Yes (legacy; migration candidate) |
-
-If your repo uses a custom default branch, list it explicitly below:
-
-- `<CUSTOM_BRANCH>`: Yes
 
 ## Reporting a vulnerability
 

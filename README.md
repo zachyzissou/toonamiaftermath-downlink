@@ -1,10 +1,9 @@
 # toonamiaftermath-downlink
 
 > Lightweight IPTV feed generation service that builds M3U/XMLTV outputs and serves a Toonami-themed web control panel.
-> Status: `active`
+> Status: `Production` (actively maintained)
 
-![CI](https://img.shields.io/github/actions/workflow/status/zachyzissou/toonamiaftermath-downlink/.github/workflows/baseline-python-ci.yml)
-![Coverage](https://img.shields.io/badge/coverage-75%25-brightgreen)
+![CI](https://github.com/zachyzissou/toonamiaftermath-downlink/actions/workflows/baseline-python-ci.yml/badge.svg?branch=main)
 ![License](https://img.shields.io/github/license/zachyzissou/toonamiaftermath-downlink)
 ![Security](https://img.shields.io/badge/security-SECURITY.md-green)
 
@@ -105,7 +104,6 @@ npm run lint:python
 npm run lint:js
 ```
 
-Coverage/quality target: 70% minimum on changed code paths plus stable lint pass for Python + JS.
 
 ## Security
 
