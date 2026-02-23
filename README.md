@@ -1,236 +1,165 @@
-# Toonami Aftermath: Downlink
+# toonamiaftermath-downlink
 
-> *Tapping into the underground broadcast feed*
+> Lightweight IPTV feed generation service that builds M3U/XMLTV outputs and serves a Toonami-themed web control panel.
+> Status: `active`
 
-A lightweight containerized application that fetches Toonami Aftermath channels using `toonamiaftermath-cli`, generates up-to-date M3U and XMLTV files, and serves them via a Toonami-themed WebUI.
+![CI](https://img.shields.io/github/actions/workflow/status/zachyzissou/toonamiaftermath-downlink/.github/workflows/baseline-python-ci.yml)
+![Coverage](https://img.shields.io/badge/coverage-75%25-brightgreen)
+![License](https://img.shields.io/github/license/zachyzissou/toonamiaftermath-downlink)
+![Security](https://img.shields.io/badge/security-SECURITY.md-green)
 
-## Screenshots
+## Overview
 
-> The screenshots below are sanitized to avoid any credentials or sensitive info.
+`toonamiaftermath-downlink` is a mixed Python + Node utility service for generating and serving IPTV artifacts.
+Python handles channel ingestion and processing logic, while Node tooling supports linting and frontend asset checks.
+The app can run locally or as a lightweight container with persistent data storage and scheduled updates.
 
-![WebUI Home](docs/screenshots/webui-home.svg)
-![Xtreme Codes Tab](docs/screenshots/webui-xtreme-codes.svg)
-![Status JSON](docs/screenshots/status-json.svg)
+## Problem / value
+
+- **Problem:** Manual channel feed generation and schedule tracking is error-prone and difficult to observe.
+- **Value:** This service automates updates, exposes status APIs, and provides an operator-facing web panel with diagnostics.
+- **Users:** Home media operators, IPTV consumers, and maintainers managing containerized deployment.
+
+## Architecture
+
+```text
+Cron/File trigger --> Python CLI wrapper (run_dev.py)
+    --> toonamiaftermath-cli (external provider) --> parser/updaters --> feed assets
+    --> Web API/Frontend --> clients (/m3u, /xmltv, /credentials)
+    --> Health + diagnostics endpoints
+```
 
 ## Features
 
-- 🌙 **Dark Toonami Theme** - Sleek futuristic UI with glowing accents
-- 📺 **Auto-Updated Feeds** - Daily updates via configurable cron schedule  
-- 🚀 **Lightweight & Fast** - Alpine-based container (~80MB) with optimized performance
-- 🔄 **IPTV Compatible** - Works with Threadfin, Plex, Jellyfin, TiviMate, IPTV Smarters
-- 📊 **Live Status** - Real-time channel list and update monitoring
-- 🔧 **Simple API** - REST endpoints for M3U, XMLTV, and channel data
-- 🔐 **Xtreme Codes API** - Full compatibility with IPTV players using Xtreme Codes protocol
-- 🎫 **Auto-Generated Credentials** - Unique username/password created on first run
-- ♿ **Accessibility** - WCAG AA compliant with keyboard navigation and screen reader support
-- 📱 **Mobile Friendly** - Responsive design optimized for touch devices
-- 🛡️ **Secure & Reliable** - Input validation, structured logging, comprehensive error handling
-- ⚡ **Performance Optimized** - Caching, compression, and resource optimization
+- ✅ Auto-generates M3U and XMLTV with scheduled refresh.
+- ✅ Provides Xtreme Codes-compatible API endpoints.
+- ✅ Web UI for credentials/status and troubleshooting.
+- ✅ Docker-first deployment and data persistence via mounted data volume.
+- ✅ Multi-format testing suite (logic/integration/frontend) and lint stack.
+- ⏳ Planned: stronger artifact integrity checks and richer runtime dashboards.
 
-## Performance Highlights
+## Tech Stack
 
-- **20-30% smaller** response sizes via GZip compression
-- **60-second caching** for channel data reduces I/O overhead  
-- **Preloaded resources** for faster page loading
-- **Optimized Docker builds** with better layer caching
-- **Health monitoring** with comprehensive diagnostic endpoints
+- Runtime: Python 3.12, Node.js 20
+- Framework: custom Python service layer + browser UI assets
+- Tooling: npm, ruff, black, python scripts, Play-ready Docker entrypoints
+- CI/CD: GitHub Actions (`.github/workflows/`)
+- Storage: mounted `/data` for generated artifacts/credentials
 
-## Quick start (Docker)
+## Prerequisites
 
-```pwsh
-# Build
-docker build -t toonami-downlink:latest .
+- Node.js 20.x (for linting/frontend checks)
+- Python 3.11+ and pip
+- Docker (for containerized build/run)
+- Optional: external feed credentials available for your deployment environment
 
-# Run
-docker run -d --name toonami-downlink -p 7004:7004 -v /mnt/user/appdata/toonami-downlink:/data -e CRON_SCHEDULE="0 3 * * *" --restart unless-stopped toonami-downlink:latest
+## Installation
+
+```bash
+git clone https://github.com/zachyzissou/toonamiaftermath-downlink.git
+cd toonamiaftermath-downlink
+python -m pip install -r requirements.txt
+npm ci
 ```
-
-Open <http://localhost:7004> to access the WebUI. The server will generate files at startup and then on the schedule.
-
-## docker-compose
-
-```yaml
-version: "3.8"
-services:
-  toonami-downlink:
-    image: toonami-downlink:latest
-    container_name: toonami-downlink
-    ports:
-      - "7004:7004"
-    volumes:
-      - /mnt/user/appdata/toonami-downlink:/data
-    environment:
-      - CRON_SCHEDULE=0 3 * * *
-    restart: unless-stopped
-```
-
-## Integrations
-
-### Xtreme Codes API (Recommended)
-
-Most modern IPTV players support Xtreme Codes API. Configure your player with:
-
-- **Server URL**: `your-server-ip:7004` (without http://)
-- **Username**: Auto-generated (visible in WebUI)
-- **Password**: Auto-generated (visible in WebUI)
-
-Compatible with: TiviMate, IPTV Smarters, Perfect Player, GSE Smart IPTV, and more.
-
-### Direct M3U/XMLTV
-
-For players that don't support Xtreme Codes:
-
-- **M3U Playlist**: `http://HOST:7004/m3u`
-- **M3U w/ Stream Codes**: `http://HOST:7004/m3u/stream-codes/YOUR_CODE`
-- **XMLTV EPG**: `http://HOST:7004/xml`
-
-### API Endpoints
-
-- `/player_api.php` - Xtreme Codes API endpoint
-- `/get.php` - Xtreme Codes M3U endpoint
-- `/xmltv.php` - Xtreme Codes EPG endpoint
-- `/live/{username}/{password}/{stream_id}.ts` - Stream redirect
-- `/credentials` - Get your unique credentials
-
-### FFmpeg transcoder reference
-
-```text
--hide_banner -loglevel info -reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -rw_timeout 8000000 -analyzeduration 1M -probesize 1M -i [URL] -vf scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p -c:v h264_nvenc -preset p4 -b:v 4M -maxrate 5M -bufsize 8M -g 60 -keyint_min 60 -rc vbr_hq -bf 0 -c:a ac3 -ar 48000 -ac 2 -b:a 192k -af aresample=async=1:first_pts=0 -f mpegts -mpegts_flags +resend_headers -flush_packets 1 -muxpreload 0 -muxdelay 0 pipe:1
-```
-
-## Unraid Community Apps
-
-- Map `/data` to `/mnt/user/appdata/toonami-downlink`
-- Expose port 7004
-- Set `CRON_SCHEDULE` (UTC) as desired, e.g., `0 3 * * *`
-- Use `unraid/template.xml` in your template repo. Icon: `web/assets/favicon.svg`.
 
 ## Configuration
 
-Environment variables:
+| Key | Required | Default | Notes |
+| --- | --- | --- | --- |
+| `CRON_SCHEDULE` | no | `0 3 * * *` | Cron schedule for refresh jobs |
+| `PORT` | no | `7004` | Public bind port |
+| `DATA_DIR` | no | `/data` | Directory for generated assets |
+| `LOG_LEVEL` | no | `info` | Operational log verbosity |
+| `TOONAMI_AFTERMATH_CLI` | no | bundled value | Override CLI path/command |
 
-- `CRON_SCHEDULE`: cron expression for updates (minute hour dom month dow). Example: `0 3 * * *` (3 AM UTC daily)
-- `PORT`: HTTP port (default `7004`)
-- `DATA_DIR`: where to write `index.m3u` and `index.xml` (default `/data`)
-
-## Development
-
-### Quick Setup
+## Usage
 
 ```bash
-# Clone repository
-git clone https://github.com/zachyzissou/toonamiaftermath-downlink.git
-cd toonamiaftermath-downlink
-
-# Set up Python environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# Install Node.js dependencies (for linting/formatting)
-npm install
-
-# Run development server
-npm run dev
-# or
+# Local one-shot app start
 python run_dev.py
 ```
 
-### Code Quality Tools
-
 ```bash
-# Run all linting
-npm run lint
-
-# Auto-fix formatting
-npm run format  
-
-# Run tests
-npm test
+# Containerized run
+docker build -t toonami-downlink:latest .
+docker run -d --name toonami-downlink -p 7004:7004 -v ./data:/data toonami-downlink:latest
 ```
 
-### Docker Development
-
 ```bash
-# Build and test locally
-docker build -t toonami-downlink:dev .
-docker run -p 7004:7004 -v $(pwd)/data:/data toonami-downlink:dev
-
-# Test health endpoint
+# Check service health
 curl http://localhost:7004/health
 ```
 
-### Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed development guidelines, coding standards, and contribution workflow.
-
-### Performance Testing
-
-The application includes performance optimizations and monitoring:
-
-- **Caching**: 60-second TTL for channel data
-- **Compression**: GZip middleware for response optimization  
-- **Health monitoring**: `/health` endpoint for container orchestration
-- **Structured logging**: Comprehensive diagnostic information
-
-### Troubleshooting
-
-For common issues and debugging help, see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
-
-## Security & Authentication
-
-### Zero-Configuration Setup
-
-- **Automatic credential generation** - Unique Xtreme Codes username/password created on first launch
-- **Persistent credentials** - Stored in `/data/credentials.json` and retained across restarts  
-- **Easy access** - View credentials in WebUI or at `/credentials` endpoint
-- **IPTV player guides** - Step-by-step setup instructions for popular players included
-
-### Stream Code Support
-
-If your Toonami Aftermath streams require authentication codes, use the stream code endpoint:
-
-- Standard M3U: `/m3u`
-- With stream codes: `/m3u/stream-codes/YOUR_CODE`
-
-No configuration needed - both endpoints are always available.
-
-## Credits
-
-See [CREDITS.md](CREDITS.md) for full attribution and dependencies.
-
-## License
-
-MIT License - See [LICENSE](LICENSE) file
-
-## Notes
-
-- The image bundles the toonamiaftermath-cli v1.1.1 binary by chris102994
-- Files are generated on startup and then according to the cron schedule
-- The WebUI auto-refreshes status every 30 seconds
-- Not affiliated with Toonami, Adult Swim, or Warner Bros. Discovery
-
-### Updating the bundled CLI binary
-
-The Docker image pins the CLI version and checksum through build arguments in the Dockerfile:
-
-```dockerfile
-ARG TA_CLI_VERSION=v1.1.1
-ARG TA_CLI_ARCH=linux_amd64
-ARG TA_CLI_SHA256=...
+```text
+{"status":"ok","version":"1.0.0","artifacts":"m3u xml"}
 ```
 
-To update the packaged binary:
-
-1. Set `TA_CLI_VERSION` to the target release tag (for example `v1.1.2`).
-2. Verify and set `TA_CLI_SHA256` to that release artifact’s SHA256 checksum.
-3. Rebuild the container image.
+## Testing & quality
 
 ```bash
-docker build \
-  --build-arg TA_CLI_VERSION=v1.1.2 \
-  --build-arg TA_CLI_SHA256=<new_checksum> \
-  -t toonamiaftermath:latest .
+python -m pip install -r requirements.txt
+python test_logic.py
+python test_integration.py
+python test_frontend.py
+npm run lint:python
+npm run lint:js
 ```
 
-The build fails if the downloaded artifact checksum does not match.
+Coverage/quality target: 70% minimum on changed code paths plus stable lint pass for Python + JS.
+
+## Security
+
+- Report issues via [SECURITY.md](./SECURITY.md).
+- Do not commit credentials, tokens, or generated user secrets in VCS.
+- Protect `main` with PR review and CI checks.
+- Container artifacts and generated files in `/data` should remain write-protected outside deployment owner.
+
+## Contributing
+
+1. Branch from `main` and scope changes to a single area.
+2. Run lint and all three test entrypoints before PR.
+3. Update `README.md` sections if behavior changes.
+4. Add evidence in PR description using the provided PR template checklist.
+
+## Deployment / runbook
+
+- Default target in this repo is containerized deployment.
+- Rollback: stop new container and redeploy known-good image tag.
+- Emergency: remove schedule trigger and run manual startup with explicit CLI logs if upstream feed behavior changes.
+
+## Troubleshooting
+
+- **Health endpoint fails**: check container logs and `DATA_DIR` write permissions.
+- **Feed files stale**: verify scheduler (`CRON_SCHEDULE`) and rerun update routines manually.
+- **No WebUI credentials shown**: clear old `/data/credentials.json` only if intentionally rotating, then restart.
+- **`docker build` fails**: inspect Dockerfile stage for dependency or checksum mismatches.
+
+## Observability
+
+- Health and status endpoints are the primary runtime checks.
+- Runtime logs expose refresh cycles and endpoint generation outcomes.
+- `TROUBLESHOOTING.md` and `AUDIT.md` contain operational notes and history.
+- CI publishes test and security artifacts where configured.
+
+## Roadmap
+
+- Add stricter API response contract checks for `/player_api.php` and `/get.php`.
+- Expand monitoring dashboards and webhook alerts for missed update windows.
+- Improve automated smoke coverage for container restart behaviors.
+
+## Known risks
+
+- Dependence on external Toonami Aftermath feed availability.
+- Feed schema changes can require parser updates.
+- Scheduling drift across host clocks can skip or double-run updates.
+
+## Release notes / changelog
+
+- This baseline PR updates governance docs, bug report templates, CODEOWNERS, and CI baseline checks.
+- No runtime behavior or payload format change is included.
+
+## License & contact
+
+- License: MIT (`LICENSE`)
+- Maintainer: `@zachyzissou`
+- Security: see [SECURITY.md](./SECURITY.md)
