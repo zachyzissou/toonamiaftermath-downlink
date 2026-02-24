@@ -1002,9 +1002,16 @@ def parse_channels_from_m3u() -> list[dict[str, Any]]:
 async def health_check():
     """Health check endpoint for container orchestration and monitoring."""
     try:
+        state = read_state()
         freshness = _guide_freshness_snapshot()
         cron_expression = os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
         cron_supported, cron_error = _cron_support_status(cron_expression)
+        consecutive_failures = int(state.get("consecutive_failures", 0) or 0)
+        scheduler_failure_check = (
+            "error"
+            if consecutive_failures >= 3
+            else ("warning" if consecutive_failures > 0 else "ok")
+        )
         freshness_check = (
             "error"
             if freshness["severity"] == "error"
@@ -1023,6 +1030,7 @@ async def health_check():
                 "memory": "ok",  # Could add actual memory check
                 "artifact_freshness": freshness_check,
                 "cron_schedule": "ok" if cron_supported else "warning",
+                "scheduler_failures": scheduler_failure_check,
             },
             "freshness": freshness,
             "cron": {
@@ -1030,13 +1038,20 @@ async def health_check():
                 "supported": cron_supported,
                 "error": cron_error,
             },
+            "last_failure": {
+                "error": state.get("last_error"),
+                "at": state.get("last_failure_at"),
+                "context": state.get("last_failure_context"),
+                "consecutive_failures": consecutive_failures,
+            },
         }
 
         # Check if any critical services are down
         critical_failures = [
             k
             for k, v in health_status["checks"].items()
-            if v == "error" and k in ["data_dir", "cli_binary", "artifact_freshness"]
+            if v == "error"
+            and k in ["data_dir", "cli_binary", "artifact_freshness", "scheduler_failures"]
         ]
 
         if critical_failures:
@@ -1800,16 +1815,22 @@ async def scheduler_loop():  # noqa: PLR0912, PLR0915
     Runs initial generation at startup, then runs according to CRON_SCHEDULE.
     Includes error handling and recovery mechanisms.
     """
+    consecutive_failures = 0
     # Initial run at startup
     logger.info("Starting scheduler with initial file generation")
     try:
         await _run_generate_files_serialized()
         logger.info("Initial file generation completed successfully")
     except Exception as e:
+        consecutive_failures = 1
+        _record_generation_failure(
+            e,
+            context="startup",
+            consecutive_failures=consecutive_failures,
+        )
         logger.error("Initial generation failed: %s", e)
 
     # Main scheduling loop
-    consecutive_failures = 0
     max_consecutive_failures = 3
 
     while True:

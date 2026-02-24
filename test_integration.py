@@ -252,8 +252,14 @@ def test_status_reports_cron_and_failure_diagnostics():
     from app import server
 
     previous_cron = os.environ.get("CRON_SCHEDULE")
+    original_scheduler_loop = server.scheduler_loop
+
+    async def noop_scheduler_loop():
+        return None
+
     try:
         os.environ["CRON_SCHEDULE"] = "0 3 * * */2"  # unsupported DOW step syntax
+        server.scheduler_loop = noop_scheduler_loop
         failure_time = datetime.now(UTC).isoformat()
         server.write_state(
             {
@@ -278,6 +284,7 @@ def test_status_reports_cron_and_failure_diagnostics():
             assert payload["consecutive_failures"] == 2
         print("✅ Status endpoint exposes cron/failure diagnostics")
     finally:
+        server.scheduler_loop = original_scheduler_loop
         if previous_cron is None:
             os.environ.pop("CRON_SCHEDULE", None)
         else:
@@ -297,6 +304,39 @@ def test_record_generation_failure_updates_state():
     assert state["consecutive_failures"] == 3
     assert state["last_failure_at"]
     print("✅ Failure metadata persistence works")
+
+
+def test_health_reports_scheduler_failure_state():
+    """Health endpoint should degrade when scheduler failures accumulate."""
+    from app import server
+
+    original_scheduler_loop = server.scheduler_loop
+
+    async def noop_scheduler_loop():
+        return None
+
+    server.scheduler_loop = noop_scheduler_loop
+    server.write_state(
+        {
+            "last_update": datetime.now(UTC).isoformat(),
+            "last_error": "scheduler crashed",
+            "last_failure_at": datetime.now(UTC).isoformat(),
+            "last_failure_context": "scheduler",
+            "consecutive_failures": 3,
+        }
+    )
+
+    try:
+        with TestClient(app) as client:
+            response = client.get("/health")
+            assert response.status_code == 503
+            payload = response.json()
+            assert payload["checks"]["scheduler_failures"] == "error"
+            assert payload["last_failure"]["consecutive_failures"] == 3
+            assert payload["last_failure"]["error"] == "scheduler crashed"
+    finally:
+        server.scheduler_loop = original_scheduler_loop
+    print("✅ Health endpoint marks repeated scheduler failures as unhealthy")
 
 
 def test_health_reports_stale_freshness():
@@ -381,6 +421,7 @@ def main():
         test_cron_next_respects_dom_mon_dow()
         test_status_reports_cron_and_failure_diagnostics()
         test_record_generation_failure_updates_state()
+        test_health_reports_scheduler_failure_state()
         test_health_reports_stale_freshness()
         test_watchdog_recovery_triggers_when_stale()
 
