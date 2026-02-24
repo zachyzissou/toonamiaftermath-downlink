@@ -93,6 +93,11 @@ docker run -d --name toonami-downlink -p 7004:7004 -v ./data:/data toonami-downl
 curl http://localhost:7004/health
 ```
 
+```bash
+# Scrape Prometheus-style metrics
+curl http://localhost:7004/metrics
+```
+
 ```text
 {"status":"ok","version":"1.0.0","artifacts":"m3u xml"}
 ```
@@ -139,6 +144,7 @@ npm run lint:js
 ## Observability
 
 - Health and status endpoints are the primary runtime checks.
+- `/metrics` exposes Prometheus-style gauges for freshness/scheduler/cron state.
 - Runtime logs expose refresh cycles and endpoint generation outcomes.
 - `TROUBLESHOOTING.md` and `AUDIT.md` contain operational notes and history.
 - CI publishes test and security artifacts where configured.

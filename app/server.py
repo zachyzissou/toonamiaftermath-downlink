@@ -1104,6 +1104,49 @@ async def status():
     }
 
 
+@app.get("/metrics")
+async def metrics():
+    """Prometheus-style runtime metrics for monitoring/alerting."""
+    now = datetime.now(UTC)
+    state = read_state()
+    freshness = _guide_freshness_snapshot(now)
+    cron_supported, _ = _cron_support_status(os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE))
+
+    last_update_value = state.get("last_update")
+    last_update_dt = (
+        _parse_iso_datetime(last_update_value) if isinstance(last_update_value, str) else None
+    )
+    last_update_age_seconds = (
+        max(0.0, (now - last_update_dt).total_seconds()) if last_update_dt else -1.0
+    )
+
+    try:
+        consecutive_failures = int(state.get("consecutive_failures", 0) or 0)
+    except (TypeError, ValueError):
+        consecutive_failures = 0
+
+    metrics_text = "\n".join(
+        [
+            "# HELP downlink_last_update_age_seconds Age in seconds since last successful update (-1 if unknown).",
+            "# TYPE downlink_last_update_age_seconds gauge",
+            f"downlink_last_update_age_seconds {last_update_age_seconds:.3f}",
+            "# HELP downlink_guide_stale 1 when guide data is considered stale, 0 otherwise.",
+            "# TYPE downlink_guide_stale gauge",
+            f"downlink_guide_stale {1 if freshness['is_stale'] else 0}",
+            "# HELP downlink_scheduler_consecutive_failures Current scheduler consecutive failure count.",
+            "# TYPE downlink_scheduler_consecutive_failures gauge",
+            f"downlink_scheduler_consecutive_failures {consecutive_failures}",
+            "# HELP downlink_cron_supported 1 when configured CRON_SCHEDULE is supported, 0 otherwise.",
+            "# TYPE downlink_cron_supported gauge",
+            f"downlink_cron_supported {1 if cron_supported else 0}",
+        ]
+    )
+    return Response(
+        content=f"{metrics_text}\n",
+        media_type="text/plain; version=0.0.4; charset=utf-8",
+    )
+
+
 @app.get("/m3u")
 async def get_m3u():
     """Get the M3U playlist file without stream codes."""
