@@ -477,6 +477,7 @@ def _verify_generated_files(generated_after: float | None = None) -> bool:
     Returns:
         bool: True if both files exist and are valid
     """
+
     def _is_recent_and_non_empty(path: Path, threshold: float | None) -> bool:
         if not path.exists():
             return False
