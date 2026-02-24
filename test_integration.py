@@ -291,6 +291,60 @@ def test_status_reports_cron_and_failure_diagnostics():
             os.environ["CRON_SCHEDULE"] = previous_cron
 
 
+def test_metrics_endpoint_prometheus_gauges():
+    """Metrics endpoint should expose Prometheus gauges for guide/scheduler state."""
+    from app import server
+
+    previous_cron = os.environ.get("CRON_SCHEDULE")
+    original_scheduler_loop = server.scheduler_loop
+
+    async def noop_scheduler_loop():
+        return None
+
+    try:
+        os.environ["CRON_SCHEDULE"] = "0 3 * * *"
+        server.scheduler_loop = noop_scheduler_loop
+
+        server.M3U_PATH.parent.mkdir(parents=True, exist_ok=True)
+        server.M3U_PATH.write_text("#EXTM3U\n#EXTINF:-1,Toonami\nhttp://example.com/stream\n")
+        server.XML_PATH.write_text("<tv></tv>\n")
+        now_ts = time.time()
+        os.utime(server.M3U_PATH, (now_ts, now_ts))
+        os.utime(server.XML_PATH, (now_ts, now_ts))
+        server.write_state(
+            {
+                "last_update": datetime.now(UTC).isoformat(),
+                "consecutive_failures": 2,
+            }
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/metrics")
+            assert response.status_code == 200
+            assert "text/plain" in response.headers.get("content-type", "")
+
+            metric_values = {}
+            for line in response.text.splitlines():
+                if not line or line.startswith("#"):
+                    continue
+                name, value = line.split(" ", 1)
+                metric_values[name] = float(value.strip())
+
+            assert "downlink_last_update_age_seconds" in metric_values
+            assert metric_values["downlink_last_update_age_seconds"] >= 0.0
+            assert metric_values["downlink_last_update_age_seconds"] < 600.0
+            assert metric_values["downlink_guide_stale"] == 0.0
+            assert metric_values["downlink_scheduler_consecutive_failures"] == 2.0
+            assert metric_values["downlink_cron_supported"] == 1.0
+    finally:
+        server.scheduler_loop = original_scheduler_loop
+        if previous_cron is None:
+            os.environ.pop("CRON_SCHEDULE", None)
+        else:
+            os.environ["CRON_SCHEDULE"] = previous_cron
+    print("✅ Metrics endpoint exposes expected Prometheus gauges")
+
+
 def test_record_generation_failure_updates_state():
     """Failure recorder should persist normalized error metadata."""
     from app import server
@@ -420,6 +474,7 @@ def main():
         test_lan_refresh_host_detection()
         test_cron_next_respects_dom_mon_dow()
         test_status_reports_cron_and_failure_diagnostics()
+        test_metrics_endpoint_prometheus_gauges()
         test_record_generation_failure_updates_state()
         test_health_reports_scheduler_failure_state()
         test_health_reports_stale_freshness()
