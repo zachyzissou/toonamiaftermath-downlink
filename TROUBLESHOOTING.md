@@ -90,6 +90,7 @@ This guide helps you diagnose and resolve common issues with Toonami Aftermath D
 4. **Manual refresh**
    - Click "Refresh now" button in the UI
    - Or call the API: `curl -X POST http://localhost:7004/refresh`
+   - If `APP_REFRESH_TOKEN` is configured: `curl -X POST -H "X-Admin-Token: <token>" http://localhost:7004/refresh`
 
 ### API Endpoints Not Working
 

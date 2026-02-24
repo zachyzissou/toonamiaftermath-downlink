@@ -8,6 +8,7 @@ import shutil
 import sys
 import tempfile
 import time
+from datetime import UTC, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -218,6 +219,34 @@ def test_generation_requires_fresh_artifacts():
     print("✅ Stale artifacts are rejected during generation validation")
 
 
+def test_lan_refresh_host_detection():
+    """Ensure LAN/private hosts are treated as local for refresh auth checks."""
+    from app import server
+
+    assert server._is_local_host("127.0.0.1")
+    assert server._is_local_host("192.168.1.20")
+    assert server._is_local_host("10.0.0.45")
+    assert server._is_local_host("172.16.0.10")
+    assert server._is_local_host("::1")
+    assert server._is_local_host("::ffff:192.168.1.40")
+    assert not server._is_local_host("8.8.8.8")
+    print("✅ LAN/private refresh host detection works as expected")
+
+
+def test_cron_next_respects_dom_mon_dow():
+    """Ensure cron scheduling applies day/month/day-of-week fields."""
+    from app import server
+
+    now = datetime(2026, 2, 24, 12, 0, tzinfo=UTC)  # Tuesday
+
+    assert server.cron_next(now, "0 3 1 * *") == datetime(2026, 3, 1, 3, 0, tzinfo=UTC)
+    assert server.cron_next(now, "0 3 * 3 *") == datetime(2026, 3, 1, 3, 0, tzinfo=UTC)
+    assert server.cron_next(now, "0 3 * * 0") == datetime(2026, 3, 1, 3, 0, tzinfo=UTC)
+    # Cron semantics: if both DOM and DOW are restricted, either may match.
+    assert server.cron_next(now, "0 3 25 * 0") == datetime(2026, 2, 25, 3, 0, tzinfo=UTC)
+    print("✅ Cron scheduling respects day/month/day-of-week fields")
+
+
 def cleanup():
     """Clean up test data directory."""
     data_dir = os.environ.get("DATA_DIR")
@@ -236,6 +265,8 @@ def main():
         test_xtreme_codes_api()
         test_input_validation()
         test_generation_requires_fresh_artifacts()
+        test_lan_refresh_host_detection()
+        test_cron_next_respects_dom_mon_dow()
 
         print("\n🎉 All integration tests passed!")
         print("✅ API endpoints are working correctly")
