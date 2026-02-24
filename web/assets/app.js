@@ -332,7 +332,7 @@ async function loadChannels() {
 
 // Enhanced refresh with user feedback and accessibility
 byId('refresh').addEventListener('click', async event => {
-  const btn = event.target;
+  const btn = event.currentTarget;
   const originalText = btn.textContent;
 
   try {

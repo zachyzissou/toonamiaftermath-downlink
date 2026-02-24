@@ -12,4 +12,5 @@ services:
       - /mnt/user/appdata/toonami-downlink:/data
     environment:
       - CRON_SCHEDULE=0 3 * * *
+      - ALLOW_ANONYMOUS_LOCAL_REFRESH=true
     restart: unless-stopped

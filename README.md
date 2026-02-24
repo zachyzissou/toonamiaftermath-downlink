@@ -69,7 +69,9 @@ npm ci
 | `PORT` | no | `7004` | Public bind port |
 | `DATA_DIR` | no | `/data` | Directory for generated assets |
 | `LOG_LEVEL` | no | `info` | Operational log verbosity |
-| `TOONAMI_AFTERMATH_CLI` | no | bundled value | Override CLI path/command |
+| `CLI_BIN` | no | `/usr/local/bin/toonamiaftermath-cli` | Override CLI binary path |
+| `ALLOW_ANONYMOUS_LOCAL_REFRESH` | no | `false` | Allow unauthenticated `/refresh` from loopback/private LAN clients |
+| `APP_REFRESH_TOKEN` | no | empty | Optional admin token for `/refresh` via `X-Admin-Token` or `Authorization: Bearer` |
 
 ## Usage
 

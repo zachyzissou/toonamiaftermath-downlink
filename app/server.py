@@ -1,4 +1,5 @@
 import asyncio
+import ipaddress
 import json
 import logging
 import mimetypes
@@ -271,10 +272,24 @@ async def _run_generate_files_serialized() -> dict[str, Any]:
 
 
 def _is_local_host(host: str | None) -> bool:
-    """Return True when client host is local."""
+    """Return True when client host is loopback or private LAN/link-local."""
     if not host:
         return False
-    return host.startswith(("127.", "::1", "localhost"))
+
+    normalized = host.strip().lower()
+    if normalized == "localhost" or normalized.startswith("127.") or normalized == "::1":
+        return True
+
+    # Handle IPv4-mapped IPv6 addresses like ::ffff:192.168.1.5
+    if normalized.startswith("::ffff:"):
+        normalized = normalized[7:]
+
+    try:
+        ip_obj = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+
+    return ip_obj.is_loopback or ip_obj.is_private or ip_obj.is_link_local
 
 
 def _extract_bearer_token(authorization: str | None) -> str | None:
@@ -1281,6 +1296,27 @@ def parse_cron_field(val: str, default_value: int) -> tuple[str, int | None]:
     return "invalid", None
 
 
+def _is_cron_field_supported(
+    mode: str,
+    value: int | None,
+    *,
+    min_value: int,
+    max_value: int,
+    allow_step: bool,
+    max_step: int | None = None,
+) -> bool:
+    """Validate parsed cron field mode/value against allowed bounds."""
+    if mode == "any":
+        return True
+    if mode == "fixed":
+        return value is not None and min_value <= value <= max_value
+    if mode == "step" and allow_step:
+        if value is None or value <= 0:
+            return False
+        return value <= max_step if max_step is not None else True
+    return False
+
+
 def get_fallback_next_run(dt: datetime) -> datetime:
     """
     Get fallback next run time (3 AM next day if past 3 AM, today if before).
@@ -1318,6 +1354,12 @@ def check_time_matches_cron(
     min_val: int | None,
     hr_mode: str,
     hr_val: int | None,
+    dom_mode: str,
+    dom_val: int | None,
+    mon_mode: str,
+    mon_val: int | None,
+    dow_mode: str,
+    dow_val: int | None,
 ) -> bool:
     """
     Check if a given time matches the cron schedule.
@@ -1330,10 +1372,14 @@ def check_time_matches_cron(
         hr_val: Hour value (if applicable)
 
     Returns:
-        bool: True if time matches schedule
+        bool: True if time matches schedule (with cron-style DOM/DOW semantics)
     """
     h = candidate.hour
     mnt = candidate.minute
+    day = candidate.day
+    month = candidate.month
+    # Cron weekday convention: Sunday=0, Monday=1, ... Saturday=6.
+    cron_weekday = (candidate.weekday() + 1) % 7
 
     ok_min = (
         (min_mode == "any")
@@ -1347,7 +1393,21 @@ def check_time_matches_cron(
         or (hr_mode == "step" and hr_val and (h % hr_val == 0))
     )
 
-    return ok_min and ok_hr
+    ok_dom = (dom_mode == "any") or (dom_mode == "fixed" and day == (dom_val or 0))
+    ok_mon = (mon_mode == "any") or (mon_mode == "fixed" and month == (mon_val or 0))
+    ok_dow = (dow_mode == "any") or (dow_mode == "fixed" and cron_weekday == (dow_val or 0))
+
+    # Standard cron behavior: if both DOM and DOW are restricted, either may match.
+    if dom_mode == "any" and dow_mode == "any":
+        ok_dom_dow = True
+    elif dom_mode == "any":
+        ok_dom_dow = ok_dow
+    elif dow_mode == "any":
+        ok_dom_dow = ok_dom
+    else:
+        ok_dom_dow = ok_dom or ok_dow
+
+    return ok_min and ok_hr and ok_mon and ok_dom_dow
 
 
 def cron_next(dt: datetime, expr: str) -> datetime | None:
@@ -1368,14 +1428,61 @@ def cron_next(dt: datetime, expr: str) -> datetime | None:
 
     mins, hrs, dom, mon, dow = cron_parts
 
-    # Parse minute and hour fields (we only support these for now)
+    # Parse fields
     min_mode, min_val = parse_cron_field(mins, 0)
     hr_mode, hr_val = parse_cron_field(hrs, DEFAULT_FALLBACK_HOUR)
+    dom_mode, dom_val = parse_cron_field(dom, 1)
+    mon_mode, mon_val = parse_cron_field(mon, 1)
+    dow_mode, dow_val = parse_cron_field(dow, 0)
 
-    # Check for invalid fields or unsupported complex expressions
-    if "invalid" in (min_mode, hr_mode) or any(
-        x not in ("*",) and not x.isdigit() for x in (dom, mon, dow)
-    ):
+    # Normalize Sunday aliases.
+    if dow_mode == "fixed" and dow_val == 7:
+        dow_val = 0
+
+    # Validate supported field ranges and modes.
+    is_supported = all(
+        (
+            _is_cron_field_supported(
+                min_mode,
+                min_val,
+                min_value=0,
+                max_value=59,
+                allow_step=True,
+                max_step=59,
+            ),
+            _is_cron_field_supported(
+                hr_mode,
+                hr_val,
+                min_value=0,
+                max_value=23,
+                allow_step=True,
+                max_step=24,
+            ),
+            _is_cron_field_supported(
+                dom_mode,
+                dom_val,
+                min_value=1,
+                max_value=31,
+                allow_step=False,
+            ),
+            _is_cron_field_supported(
+                mon_mode,
+                mon_val,
+                min_value=1,
+                max_value=12,
+                allow_step=False,
+            ),
+            _is_cron_field_supported(
+                dow_mode,
+                dow_val,
+                min_value=0,
+                max_value=6,
+                allow_step=False,
+            ),
+        )
+    )
+
+    if not is_supported:
         logger.warning(f"Unsupported cron expression: {expr}, using fallback schedule")
         return get_fallback_next_run(dt)
 
@@ -1383,7 +1490,19 @@ def cron_next(dt: datetime, expr: str) -> datetime | None:
     candidate = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
 
     for _ in range(MAX_SCHEDULE_SEARCH_MINUTES):
-        if check_time_matches_cron(candidate, min_mode, min_val, hr_mode, hr_val):
+        if check_time_matches_cron(
+            candidate,
+            min_mode,
+            min_val,
+            hr_mode,
+            hr_val,
+            dom_mode,
+            dom_val,
+            mon_mode,
+            mon_val,
+            dow_mode,
+            dow_val,
+        ):
             return candidate
         candidate += timedelta(minutes=1)
 
