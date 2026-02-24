@@ -104,7 +104,6 @@ npm run lint:python
 npm run lint:js
 ```
 
-
 ## Security
 
 - Report issues via [SECURITY.md](./SECURITY.md).

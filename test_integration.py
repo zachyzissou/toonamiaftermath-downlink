@@ -7,6 +7,7 @@ Basic tests to ensure the API responds correctly to requests.
 import shutil
 import sys
 import tempfile
+import time
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -201,6 +202,22 @@ def test_refresh_endpoint_requires_auth():
         print("✅ Refresh endpoint is protected from anonymous access")
 
 
+def test_generation_requires_fresh_artifacts():
+    """Ensure generation validation rejects stale pre-existing artifacts."""
+    from app import server
+
+    server.M3U_PATH.parent.mkdir(parents=True, exist_ok=True)
+    server.M3U_PATH.write_text("#EXTM3U\n")
+    server.XML_PATH.write_text("<tv></tv>\n")
+
+    stale_mtime = time.time() - 3 * 24 * 60 * 60  # 3 days ago
+    os.utime(server.M3U_PATH, (stale_mtime, stale_mtime))
+    os.utime(server.XML_PATH, (stale_mtime, stale_mtime))
+
+    assert not server._verify_generated_files(generated_after=time.time())
+    print("✅ Stale artifacts are rejected during generation validation")
+
+
 def cleanup():
     """Clean up test data directory."""
     data_dir = os.environ.get("DATA_DIR")
@@ -218,6 +235,7 @@ def main():
         test_api_endpoints()
         test_xtreme_codes_api()
         test_input_validation()
+        test_generation_requires_fresh_artifacts()
 
         print("\n🎉 All integration tests passed!")
         print("✅ API endpoints are working correctly")

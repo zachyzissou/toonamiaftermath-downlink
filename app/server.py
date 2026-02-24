@@ -62,6 +62,7 @@ class CachedStaticFiles(StaticFiles):
 DEFAULT_CRON_SCHEDULE = "0 3 * * *"
 DEFAULT_PORT = 7004
 MAX_CHANNELS_TO_LOG = 100
+MTIME_TOLERANCE_SECONDS = 1.0
 
 # Configuration constants
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
@@ -418,6 +419,7 @@ async def generate_files() -> dict[str, Any]:
     success = False
     for attempt_num, (cmd, cwd) in enumerate(attempts, 1):
         logger.info(f"Attempt {attempt_num}/{len(attempts)}: {' '.join(cmd)}")
+        attempt_started_at = time.time()
 
         try:
             # Use retry mechanism for CLI execution
@@ -445,9 +447,13 @@ async def generate_files() -> dict[str, Any]:
             continue
 
         # Check if files were generated successfully
-        success = _verify_generated_files()
+        success = _verify_generated_files(generated_after=attempt_started_at)
         if success:
             break
+        logger.warning(
+            "Artifact validation failed after successful CLI exit; "
+            "files were not refreshed for this attempt."
+        )
 
     if not success:
         raise RuntimeError("Failed to generate M3U/XML files after multiple attempts")
@@ -465,15 +471,48 @@ async def generate_files() -> dict[str, Any]:
     return state
 
 
-def _verify_generated_files() -> bool:
+def _verify_generated_files(generated_after: float | None = None) -> bool:
     """
     Verify that M3U and XML files were generated successfully.
+
+    This checks that both artifacts:
+    - exist on disk
+    - are non-empty
+    - and, when ``generated_after`` is provided, were modified at or after
+      that UNIX timestamp (with a small filesystem timestamp tolerance)
+
+    Args:
+        generated_after: Optional UNIX timestamp in seconds used as a freshness
+            threshold for generated artifacts.
 
     Returns:
         bool: True if both files exist and are valid
     """
-    # If explicit paths were provided, check them directly
-    if M3U_PATH.exists() and XML_PATH.exists():
+
+    def _is_recent_and_non_empty(path: Path, threshold: float | None) -> bool:
+        if not path.exists():
+            return False
+        stat = path.stat()
+        if stat.st_size <= 0:
+            logger.warning("Generated artifact is empty: %s", path)
+            return False
+        if threshold is None:
+            return True
+        # Small tolerance for filesystem timestamp precision.
+        if stat.st_mtime + MTIME_TOLERANCE_SECONDS < threshold:
+            logger.warning(
+                "Artifact %s appears stale (mtime=%s, expected >= %s)",
+                path,
+                datetime.fromtimestamp(stat.st_mtime, tz=UTC).isoformat(),
+                datetime.fromtimestamp(threshold, tz=UTC).isoformat(),
+            )
+            return False
+        return True
+
+    # If explicit paths were provided, validate them directly.
+    if _is_recent_and_non_empty(M3U_PATH, generated_after) and _is_recent_and_non_empty(
+        XML_PATH, generated_after
+    ):
         return True
 
     # Otherwise, check common defaults in DATA_DIR (and legacy /app)
@@ -506,7 +545,9 @@ def _verify_generated_files() -> bool:
                 except Exception as copy_e:
                     logger.error(f"Failed to copy XML file: {copy_e}")
 
-    return M3U_PATH.exists() and XML_PATH.exists()
+    return _is_recent_and_non_empty(M3U_PATH, generated_after) and _is_recent_and_non_empty(
+        XML_PATH, generated_after
+    )
 
 
 async def get_cli_version() -> str | None:
