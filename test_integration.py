@@ -281,9 +281,12 @@ def test_watchdog_recovery_triggers_when_stale():
     stale_time = datetime.now(UTC) - timedelta(days=3)
     server.write_state({"last_update": stale_time.isoformat()})
     server.app.state.last_stale_recovery_attempt = 0.0
+    server.app.state.generation_task = None
 
     calls = {"count": 0}
     original = server._run_generate_files_serialized
+    original_cooldown = server.STALE_RECOVERY_COOLDOWN_SECONDS
+    original_generation_in_progress = server._generation_in_progress
 
     async def fake_generate():
         calls["count"] += 1
@@ -291,12 +294,16 @@ def test_watchdog_recovery_triggers_when_stale():
         return {"ok": True}
 
     try:
+        server.STALE_RECOVERY_COOLDOWN_SECONDS = 0
+        server._generation_in_progress = lambda: False
         server._run_generate_files_serialized = fake_generate
         triggered = asyncio.run(server._run_stale_recovery_if_needed(datetime.now(UTC)))
         assert triggered is True
         assert calls["count"] == 1
     finally:
+        server.STALE_RECOVERY_COOLDOWN_SECONDS = original_cooldown
         server._run_generate_files_serialized = original
+        server._generation_in_progress = original_generation_in_progress
     print("✅ Stale-data watchdog triggers recovery refresh")
 
 

@@ -1678,7 +1678,7 @@ def cron_next(dt: datetime, expr: str) -> datetime | None:
     return get_fallback_next_run(dt)
 
 
-async def scheduler_loop():
+async def scheduler_loop():  # noqa: PLR0912, PLR0915
     """
     Main scheduler loop that runs file generation on schedule.
 
