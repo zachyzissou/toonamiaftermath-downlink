@@ -1273,7 +1273,8 @@ CRON_RE = re.compile(
     r"^\s*([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s+([0-9*,/\-]+)\s*$"
 )
 DEFAULT_FALLBACK_HOUR = 3
-MAX_SCHEDULE_SEARCH_MINUTES = 24 * 60 + 2
+# Search up to one leap year ahead for DOM/MON/DOW constrained schedules.
+MAX_SCHEDULE_SEARCH_MINUTES = (366 * 24 * 60) + 2
 
 
 def parse_cron_field(val: str, default_value: int) -> tuple[str, int | None]:
