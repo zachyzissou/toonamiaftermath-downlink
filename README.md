@@ -72,6 +72,8 @@ npm ci
 | `CLI_BIN` | no | `/usr/local/bin/toonamiaftermath-cli` | Override CLI binary path |
 | `ALLOW_ANONYMOUS_LOCAL_REFRESH` | no | `false` | Allow unauthenticated `/refresh` from loopback/private LAN clients |
 | `APP_REFRESH_TOKEN` | no | empty | Optional admin token for `/refresh` via `X-Admin-Token` or `Authorization: Bearer` |
+| `STALE_UPDATE_THRESHOLD_SECONDS` | no | `172800` | Mark guide data stale when update age exceeds threshold |
+| `STALE_RECOVERY_COOLDOWN_SECONDS` | no | `900` | Minimum delay between automatic stale-data recovery refresh attempts |
 
 ## Usage
 
@@ -129,7 +131,7 @@ npm run lint:js
 ## Troubleshooting
 
 - **Health endpoint fails**: check container logs and `DATA_DIR` write permissions.
-- **Feed files stale**: verify scheduler (`CRON_SCHEDULE`) and rerun update routines manually.
+- **Feed files stale**: inspect `/health` `freshness` fields, tune `STALE_UPDATE_THRESHOLD_SECONDS` if needed, and rerun update routines manually.
 - **No WebUI credentials shown**: clear old `/data/credentials.json` only if intentionally rotating, then restart.
 - **`docker build` fails**: inspect Dockerfile stage for dependency or checksum mismatches.
 
