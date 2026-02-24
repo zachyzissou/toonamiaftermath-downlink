@@ -299,6 +299,30 @@ def test_record_generation_failure_updates_state():
     print("✅ Failure metadata persistence works")
 
 
+def test_health_reports_scheduler_failure_state():
+    """Health endpoint should degrade when scheduler failures accumulate."""
+    from app import server
+
+    server.write_state(
+        {
+            "last_update": datetime.now(UTC).isoformat(),
+            "last_error": "scheduler crashed",
+            "last_failure_at": datetime.now(UTC).isoformat(),
+            "last_failure_context": "scheduler",
+            "consecutive_failures": 3,
+        }
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert response.status_code == 503
+        payload = response.json()
+        assert payload["checks"]["scheduler_failures"] == "error"
+        assert payload["last_failure"]["consecutive_failures"] == 3
+        assert payload["last_failure"]["error"] == "scheduler crashed"
+    print("✅ Health endpoint marks repeated scheduler failures as unhealthy")
+
+
 def test_health_reports_stale_freshness():
     """Health endpoint should surface stale artifact freshness details."""
     from app import server
@@ -381,6 +405,7 @@ def main():
         test_cron_next_respects_dom_mon_dow()
         test_status_reports_cron_and_failure_diagnostics()
         test_record_generation_failure_updates_state()
+        test_health_reports_scheduler_failure_state()
         test_health_reports_stale_freshness()
         test_watchdog_recovery_triggers_when_stale()
 
