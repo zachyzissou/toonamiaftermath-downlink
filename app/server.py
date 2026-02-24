@@ -66,6 +66,7 @@ MAX_CHANNELS_TO_LOG = 100
 MTIME_TOLERANCE_SECONDS = 1.0
 DEFAULT_STALE_UPDATE_THRESHOLD_SECONDS = 48 * 60 * 60
 DEFAULT_STALE_RECOVERY_COOLDOWN_SECONDS = 15 * 60
+INVALID_CRON_RECHECK_SECONDS = 5 * 60
 
 # Configuration constants
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
@@ -394,6 +395,37 @@ def write_state(state: dict[str, Any]) -> None:
         logger.error(f"Failed to write state file: {e}")
 
 
+def _normalize_error_message(error: Exception | str, max_length: int = 500) -> str:
+    """Normalize error values for state persistence and API responses."""
+    if isinstance(error, Exception):
+        message = str(error).strip()
+        if not message:
+            message = error.__class__.__name__
+    else:
+        message = str(error).strip()
+    return message[:max_length]
+
+
+def _record_generation_failure(
+    error: Exception | str,
+    *,
+    context: str,
+    consecutive_failures: int | None = None,
+) -> None:
+    """Persist generation failure metadata for observability endpoints."""
+    state = read_state()
+    state.update(
+        {
+            "last_error": _normalize_error_message(error),
+            "last_failure_at": datetime.now(UTC).isoformat(),
+            "last_failure_context": context,
+        }
+    )
+    if consecutive_failures is not None:
+        state["consecutive_failures"] = int(consecutive_failures)
+    write_state(state)
+
+
 def _parse_iso_datetime(value: str | None) -> datetime | None:
     """Parse an ISO timestamp to UTC, supporting trailing Z."""
     if not value:
@@ -636,6 +668,10 @@ async def generate_files() -> dict[str, Any]:
         {
             "last_update": datetime.now(UTC).isoformat(),
             "cli_version": await get_cli_version(),
+            "last_error": None,
+            "last_failure_at": None,
+            "last_failure_context": None,
+            "consecutive_failures": 0,
         }
     )
     write_state(state)
@@ -967,6 +1003,8 @@ async def health_check():
     """Health check endpoint for container orchestration and monitoring."""
     try:
         freshness = _guide_freshness_snapshot()
+        cron_expression = os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
+        cron_supported, cron_error = _cron_support_status(cron_expression)
         freshness_check = (
             "error"
             if freshness["severity"] == "error"
@@ -984,8 +1022,14 @@ async def health_check():
                 "cli_binary": "ok" if CLI_BIN.exists() else "error",
                 "memory": "ok",  # Could add actual memory check
                 "artifact_freshness": freshness_check,
+                "cron_schedule": "ok" if cron_supported else "warning",
             },
             "freshness": freshness,
+            "cron": {
+                "expression": cron_expression,
+                "supported": cron_supported,
+                "error": cron_error,
+            },
         }
 
         # Check if any critical services are down
@@ -1025,14 +1069,22 @@ async def status():
     last_update = state.get("last_update")
     cron = os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
     cli_version = state.get("cli_version")
+    cron_supported, cron_error = _cron_support_status(cron)
     return {
         "last_update": last_update,
         "next_run": (
             app.state.scheduler_next_run if hasattr(app.state, "scheduler_next_run") else None
         ),
         "cron": cron,
+        "cron_supported": cron_supported,
+        "cron_error": cron_error,
         "cli_version": cli_version,
         "channel_count": len(parse_channels_from_m3u()),
+        "freshness": _guide_freshness_snapshot(),
+        "last_error": state.get("last_error"),
+        "last_failure_at": state.get("last_failure_at"),
+        "last_failure_context": state.get("last_failure_context"),
+        "consecutive_failures": state.get("consecutive_failures", 0),
         "stream_endpoints_available": True,
     }
 
@@ -1119,6 +1171,7 @@ async def refresh(
         exc = task_result.exception()
         if exc:
             logger.error("Manual refresh task failed: %s", exc)
+            _record_generation_failure(exc, context="manual_refresh")
             return
         logger.info("Manual refresh task completed successfully")
 
@@ -1498,7 +1551,11 @@ def get_fallback_next_run(dt: datetime) -> datetime:
     return base if base > dt else base + timedelta(days=1)
 
 
-def validate_cron_expression(expr: str) -> tuple[str, str, str, str, str] | None:
+def validate_cron_expression(
+    expr: str,
+    *,
+    log_invalid: bool = True,
+) -> tuple[str, str, str, str, str] | None:
     """
     Validate and parse cron expression.
 
@@ -1509,10 +1566,111 @@ def validate_cron_expression(expr: str) -> tuple[str, str, str, str, str] | None
         Tuple of (mins, hrs, dom, mon, dow) if valid, None otherwise
     """
     match = CRON_RE.match(expr)
-    if not match:
+    if not match and log_invalid:
         logger.warning(f"Invalid cron expression format: {expr}")
+    if not match:
         return None
     return match.groups()
+
+
+def _parse_supported_cron(
+    expr: str,
+    *,
+    log_invalid: bool = True,
+) -> tuple[tuple[Any, ...] | None, str | None]:
+    """Parse cron expression into validated/supported matching components."""
+    cron_parts = validate_cron_expression(expr, log_invalid=log_invalid)
+    if not cron_parts:
+        return None, "Invalid cron expression format"
+
+    mins, hrs, dom, mon, dow = cron_parts
+    min_mode, min_val = parse_cron_field(mins, 0)
+    hr_mode, hr_val = parse_cron_field(hrs, DEFAULT_FALLBACK_HOUR)
+    dom_mode, dom_val = parse_cron_field(dom, 1)
+    mon_mode, mon_val = parse_cron_field(mon, 1)
+    dow_mode, dow_val = parse_cron_field(dow, 0)
+
+    # Normalize Sunday aliases.
+    if dow_mode == "fixed" and dow_val == 7:
+        dow_val = 0
+
+    support_checks = (
+        (
+            "minute",
+            _is_cron_field_supported(
+                min_mode,
+                min_val,
+                min_value=0,
+                max_value=59,
+                allow_step=True,
+                max_step=59,
+            ),
+        ),
+        (
+            "hour",
+            _is_cron_field_supported(
+                hr_mode,
+                hr_val,
+                min_value=0,
+                max_value=23,
+                allow_step=True,
+                max_step=24,
+            ),
+        ),
+        (
+            "day-of-month",
+            _is_cron_field_supported(
+                dom_mode,
+                dom_val,
+                min_value=1,
+                max_value=31,
+                allow_step=False,
+            ),
+        ),
+        (
+            "month",
+            _is_cron_field_supported(
+                mon_mode,
+                mon_val,
+                min_value=1,
+                max_value=12,
+                allow_step=False,
+            ),
+        ),
+        (
+            "day-of-week",
+            _is_cron_field_supported(
+                dow_mode,
+                dow_val,
+                min_value=0,
+                max_value=6,
+                allow_step=False,
+            ),
+        ),
+    )
+
+    for field_name, is_supported in support_checks:
+        if not is_supported:
+            return None, f"Unsupported {field_name} field"
+
+    return (
+        min_mode,
+        min_val,
+        hr_mode,
+        hr_val,
+        dom_mode,
+        dom_val,
+        mon_mode,
+        mon_val,
+        dow_mode,
+        dow_val,
+    ), None
+
+
+def _cron_support_status(expr: str) -> tuple[bool, str | None]:
+    """Return whether the current cron expression is supported and any error text."""
+    parsed, error = _parse_supported_cron(expr, log_invalid=False)
+    return parsed is not None, error
 
 
 def check_time_matches_cron(
@@ -1588,70 +1746,27 @@ def cron_next(dt: datetime, expr: str) -> datetime | None:
     Returns:
         Next scheduled run time, or None if invalid
     """
-    # Parse and validate cron expression
-    cron_parts = validate_cron_expression(expr)
-    if not cron_parts:
-        return get_fallback_next_run(dt)
-
-    mins, hrs, dom, mon, dow = cron_parts
-
-    # Parse fields
-    min_mode, min_val = parse_cron_field(mins, 0)
-    hr_mode, hr_val = parse_cron_field(hrs, DEFAULT_FALLBACK_HOUR)
-    dom_mode, dom_val = parse_cron_field(dom, 1)
-    mon_mode, mon_val = parse_cron_field(mon, 1)
-    dow_mode, dow_val = parse_cron_field(dow, 0)
-
-    # Normalize Sunday aliases.
-    if dow_mode == "fixed" and dow_val == 7:
-        dow_val = 0
-
-    # Validate supported field ranges and modes.
-    is_supported = all(
-        (
-            _is_cron_field_supported(
-                min_mode,
-                min_val,
-                min_value=0,
-                max_value=59,
-                allow_step=True,
-                max_step=59,
-            ),
-            _is_cron_field_supported(
-                hr_mode,
-                hr_val,
-                min_value=0,
-                max_value=23,
-                allow_step=True,
-                max_step=24,
-            ),
-            _is_cron_field_supported(
-                dom_mode,
-                dom_val,
-                min_value=1,
-                max_value=31,
-                allow_step=False,
-            ),
-            _is_cron_field_supported(
-                mon_mode,
-                mon_val,
-                min_value=1,
-                max_value=12,
-                allow_step=False,
-            ),
-            _is_cron_field_supported(
-                dow_mode,
-                dow_val,
-                min_value=0,
-                max_value=6,
-                allow_step=False,
-            ),
+    parsed, parse_error = _parse_supported_cron(expr, log_invalid=True)
+    if not parsed:
+        logger.warning(
+            "Unsupported cron expression: %s (%s), using fallback schedule",
+            expr,
+            parse_error,
         )
-    )
-
-    if not is_supported:
-        logger.warning(f"Unsupported cron expression: {expr}, using fallback schedule")
         return get_fallback_next_run(dt)
+
+    (
+        min_mode,
+        min_val,
+        hr_mode,
+        hr_val,
+        dom_mode,
+        dom_val,
+        mon_mode,
+        mon_val,
+        dow_mode,
+        dow_val,
+    ) = parsed
 
     # Search for next matching time
     candidate = dt.replace(second=0, microsecond=0) + timedelta(minutes=1)
@@ -1708,6 +1823,36 @@ async def scheduler_loop():  # noqa: PLR0912, PLR0915
                 continue
 
             cron_expression = os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
+            cron_supported, cron_error = _cron_support_status(cron_expression)
+            previous_cron_error = getattr(app.state, "scheduler_cron_error", None)
+            app.state.scheduler_cron_error = cron_error
+            if cron_error and cron_error != previous_cron_error:
+                logger.error(
+                    "Invalid/unsupported CRON_SCHEDULE '%s': %s",
+                    cron_expression,
+                    cron_error,
+                )
+            if not cron_error and previous_cron_error:
+                logger.info("CRON_SCHEDULE validation recovered: %s", cron_expression)
+
+            if not cron_supported:
+                app.state.scheduler_next_run = None
+                delay = INVALID_CRON_RECHECK_SECONDS
+                if freshness["is_stale"]:
+                    stale_delay = max(30.0, min(300.0, _stale_recovery_cooldown_remaining()))
+                    delay = min(delay, stale_delay)
+                    logger.warning(
+                        "Invalid CRON_SCHEDULE with stale guide data; watchdog recheck in %.0fs",
+                        delay,
+                    )
+                else:
+                    logger.warning(
+                        "Invalid CRON_SCHEDULE; retrying scheduler validation in %.0fs",
+                        delay,
+                    )
+                await asyncio.sleep(delay)
+                continue
+
             next_run = cron_next(now, cron_expression)
 
             if next_run:
@@ -1756,6 +1901,11 @@ async def scheduler_loop():  # noqa: PLR0912, PLR0915
             raise
         except Exception as e:
             consecutive_failures += 1
+            _record_generation_failure(
+                e,
+                context="scheduler",
+                consecutive_failures=consecutive_failures,
+            )
             logger.error(
                 "Scheduled generation failed (attempt %d/%d): %s",
                 consecutive_failures,
@@ -1775,6 +1925,7 @@ async def on_startup():
     # Initialize credentials on startup
     creds = load_or_create_credentials()
     app.state.last_stale_recovery_attempt = 0.0
+    app.state.scheduler_cron_error = None
     app.state.scheduler_task = asyncio.create_task(scheduler_loop())
     logger.info("Xtreme Codes API credentials ready")
     logger.info(f"Username: {creds.get('username')}")

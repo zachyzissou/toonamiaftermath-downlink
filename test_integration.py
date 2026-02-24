@@ -247,6 +247,58 @@ def test_cron_next_respects_dom_mon_dow():
     print("✅ Cron scheduling respects day/month/day-of-week fields")
 
 
+def test_status_reports_cron_and_failure_diagnostics():
+    """Status endpoint should expose cron support and last failure metadata."""
+    from app import server
+
+    previous_cron = os.environ.get("CRON_SCHEDULE")
+    try:
+        os.environ["CRON_SCHEDULE"] = "0 3 * * */2"  # unsupported DOW step syntax
+        failure_time = datetime.now(UTC).isoformat()
+        server.write_state(
+            {
+                "last_update": datetime.now(UTC).isoformat(),
+                "last_error": "simulated failure",
+                "last_failure_at": failure_time,
+                "last_failure_context": "scheduler",
+                "consecutive_failures": 2,
+            }
+        )
+
+        with TestClient(app) as client:
+            response = client.get("/status")
+            assert response.status_code == 200
+            payload = response.json()
+            assert payload["cron_supported"] is False
+            assert payload["cron_error"] is not None
+            assert "Unsupported day-of-week field" in payload["cron_error"]
+            assert payload["last_error"] == "simulated failure"
+            assert payload["last_failure_at"] == failure_time
+            assert payload["last_failure_context"] == "scheduler"
+            assert payload["consecutive_failures"] == 2
+        print("✅ Status endpoint exposes cron/failure diagnostics")
+    finally:
+        if previous_cron is None:
+            os.environ.pop("CRON_SCHEDULE", None)
+        else:
+            os.environ["CRON_SCHEDULE"] = previous_cron
+
+
+def test_record_generation_failure_updates_state():
+    """Failure recorder should persist normalized error metadata."""
+    from app import server
+
+    server._record_generation_failure(
+        RuntimeError("boom"), context="scheduler", consecutive_failures=3
+    )
+    state = server.read_state()
+    assert state["last_error"] == "boom"
+    assert state["last_failure_context"] == "scheduler"
+    assert state["consecutive_failures"] == 3
+    assert state["last_failure_at"]
+    print("✅ Failure metadata persistence works")
+
+
 def test_health_reports_stale_freshness():
     """Health endpoint should surface stale artifact freshness details."""
     from app import server
@@ -327,6 +379,8 @@ def main():
         test_generation_requires_fresh_artifacts()
         test_lan_refresh_host_detection()
         test_cron_next_respects_dom_mon_dow()
+        test_status_reports_cron_and_failure_diagnostics()
+        test_record_generation_failure_updates_state()
         test_health_reports_stale_freshness()
         test_watchdog_recovery_triggers_when_stale()
 
