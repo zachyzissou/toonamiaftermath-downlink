@@ -64,6 +64,8 @@ DEFAULT_CRON_SCHEDULE = "0 3 * * *"
 DEFAULT_PORT = 7004
 MAX_CHANNELS_TO_LOG = 100
 MTIME_TOLERANCE_SECONDS = 1.0
+DEFAULT_STALE_UPDATE_THRESHOLD_SECONDS = 48 * 60 * 60
+DEFAULT_STALE_RECOVERY_COOLDOWN_SECONDS = 15 * 60
 
 # Configuration constants
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
@@ -91,6 +93,19 @@ ALLOW_ANONYMOUS_LOCAL_REFRESH = os.environ.get(
     "yes",
     "on",
 }
+STALE_UPDATE_THRESHOLD_SECONDS = int(
+    os.environ.get(
+        "STALE_UPDATE_THRESHOLD_SECONDS",
+        str(DEFAULT_STALE_UPDATE_THRESHOLD_SECONDS),
+    )
+)
+STALE_RECOVERY_COOLDOWN_SECONDS = int(
+    os.environ.get(
+        "STALE_RECOVERY_COOLDOWN_SECONDS",
+        str(DEFAULT_STALE_RECOVERY_COOLDOWN_SECONDS),
+    )
+)
+CRITICAL_STALE_THRESHOLD_SECONDS = STALE_UPDATE_THRESHOLD_SECONDS * 2
 
 # MIME type constants
 MIME_M3U = "application/x-mpegURL"
@@ -377,6 +392,148 @@ def write_state(state: dict[str, Any]) -> None:
         logger.debug("State file updated successfully")
     except Exception as e:
         logger.error(f"Failed to write state file: {e}")
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    """Parse an ISO timestamp to UTC, supporting trailing Z."""
+    if not value:
+        return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = f"{normalized[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _artifact_age_seconds(path: Path, now_ts: float) -> tuple[int | None, str | None]:
+    """Return artifact age in seconds and any issue label."""
+    if not path.exists():
+        return None, "missing"
+    try:
+        stat = path.stat()
+    except OSError:
+        return None, "unreadable"
+    if stat.st_size <= 0:
+        return None, "empty"
+    age_seconds = int(max(0.0, now_ts - stat.st_mtime))
+    return age_seconds, None
+
+
+def _guide_freshness_snapshot(now: datetime | None = None) -> dict[str, Any]:
+    """
+    Return a freshness summary for generated guide artifacts.
+
+    Uses both artifact mtimes and state last_update to determine effective age.
+    """
+    current = now or datetime.now(UTC)
+    now_ts = current.timestamp()
+
+    m3u_age, m3u_issue = _artifact_age_seconds(M3U_PATH, now_ts)
+    xml_age, xml_issue = _artifact_age_seconds(XML_PATH, now_ts)
+
+    state = read_state()
+    last_update_raw = state.get("last_update")
+    last_update_dt = (
+        _parse_iso_datetime(last_update_raw) if isinstance(last_update_raw, str) else None
+    )
+    state_age_seconds = (
+        int(max(0.0, (current - last_update_dt).total_seconds())) if last_update_dt else None
+    )
+
+    artifact_age_candidates = [age for age in (m3u_age, xml_age) if age is not None]
+    artifact_age_seconds = max(artifact_age_candidates) if artifact_age_candidates else None
+
+    effective_age_candidates = [
+        age for age in (artifact_age_seconds, state_age_seconds) if age is not None
+    ]
+    effective_age_seconds = max(effective_age_candidates) if effective_age_candidates else None
+
+    artifact_issues: list[str] = []
+    if m3u_issue:
+        artifact_issues.append(f"m3u:{m3u_issue}")
+    if xml_issue:
+        artifact_issues.append(f"xml:{xml_issue}")
+
+    is_stale = False
+    severity = "ok"
+    reason = "fresh"
+
+    if effective_age_seconds is None:
+        is_stale = True
+        severity = "warning"
+        reason = "unknown_age"
+    elif effective_age_seconds > STALE_UPDATE_THRESHOLD_SECONDS:
+        is_stale = True
+        reason = "stale"
+        severity = (
+            "error"
+            if effective_age_seconds >= CRITICAL_STALE_THRESHOLD_SECONDS or artifact_issues
+            else "warning"
+        )
+    elif artifact_issues:
+        is_stale = True
+        severity = "warning"
+        reason = "artifact_issue"
+
+    return {
+        "is_stale": is_stale,
+        "severity": severity,
+        "reason": reason,
+        "threshold_seconds": STALE_UPDATE_THRESHOLD_SECONDS,
+        "critical_threshold_seconds": CRITICAL_STALE_THRESHOLD_SECONDS,
+        "effective_age_seconds": effective_age_seconds,
+        "artifact_age_seconds": artifact_age_seconds,
+        "state_age_seconds": state_age_seconds,
+        "last_update": last_update_raw if isinstance(last_update_raw, str) else None,
+        "artifact_issues": artifact_issues,
+    }
+
+
+def _stale_recovery_cooldown_remaining() -> float:
+    """Return remaining stale-recovery cooldown in seconds."""
+    last_attempt = float(getattr(app.state, "last_stale_recovery_attempt", 0.0))
+    elapsed = time.monotonic() - last_attempt
+    return max(0.0, STALE_RECOVERY_COOLDOWN_SECONDS - elapsed)
+
+
+async def _run_stale_recovery_if_needed(
+    now: datetime,
+    freshness: dict[str, Any] | None = None,
+) -> bool:
+    """Attempt immediate guide refresh when stale data is detected."""
+    snapshot = freshness or _guide_freshness_snapshot(now)
+    if not snapshot.get("is_stale"):
+        return False
+
+    if _generation_in_progress():
+        logger.warning(
+            "Guide data stale; watchdog recovery deferred (generation already running)"
+        )
+        return False
+
+    cooldown_remaining = _stale_recovery_cooldown_remaining()
+    if cooldown_remaining > 0:
+        logger.warning(
+            "Guide data stale; watchdog recovery cooldown active for %.0fs",
+            cooldown_remaining,
+        )
+        return False
+
+    app.state.last_stale_recovery_attempt = time.monotonic()
+    logger.warning(
+        "Guide data stale (reason=%s age=%s threshold=%ss); triggering recovery refresh",
+        snapshot.get("reason"),
+        snapshot.get("effective_age_seconds"),
+        STALE_UPDATE_THRESHOLD_SECONDS,
+    )
+    await _run_generate_files_serialized()
+    logger.info("Watchdog recovery refresh completed successfully")
+    return True
 
 
 async def run_cmd(cmd: list[str], cwd: str | None = None) -> int:
@@ -809,6 +966,13 @@ def parse_channels_from_m3u() -> list[dict[str, Any]]:
 async def health_check():
     """Health check endpoint for container orchestration and monitoring."""
     try:
+        freshness = _guide_freshness_snapshot()
+        freshness_check = (
+            "error"
+            if freshness["severity"] == "error"
+            else ("warning" if freshness["is_stale"] else "ok")
+        )
+
         # Check basic functionality
         health_status = {
             "status": "healthy",
@@ -819,14 +983,16 @@ async def health_check():
                 "web_assets": "ok" if (WEB_DIR / "assets").exists() else "warning",
                 "cli_binary": "ok" if CLI_BIN.exists() else "error",
                 "memory": "ok",  # Could add actual memory check
+                "artifact_freshness": freshness_check,
             },
+            "freshness": freshness,
         }
 
         # Check if any critical services are down
         critical_failures = [
             k
             for k, v in health_status["checks"].items()
-            if v == "error" and k in ["data_dir", "cli_binary"]
+            if v == "error" and k in ["data_dir", "cli_binary", "artifact_freshness"]
         ]
 
         if critical_failures:
@@ -1512,7 +1678,7 @@ def cron_next(dt: datetime, expr: str) -> datetime | None:
     return get_fallback_next_run(dt)
 
 
-async def scheduler_loop():
+async def scheduler_loop():  # noqa: PLR0912, PLR0915
     """
     Main scheduler loop that runs file generation on schedule.
 
@@ -1534,18 +1700,42 @@ async def scheduler_loop():
     while True:
         try:
             now = datetime.now(UTC)
+            freshness = _guide_freshness_snapshot(now)
+            if freshness["is_stale"] and await _run_stale_recovery_if_needed(
+                now, freshness=freshness
+            ):
+                consecutive_failures = 0
+                continue
+
             cron_expression = os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE)
             next_run = cron_next(now, cron_expression)
 
             if next_run:
                 app.state.scheduler_next_run = next_run.isoformat()
                 delay = max(5.0, (next_run - now).total_seconds())
-                logger.info("Next scheduled run at %s (in %.0fs)", next_run, delay)
+                if freshness["is_stale"]:
+                    stale_delay = max(30.0, min(300.0, _stale_recovery_cooldown_remaining()))
+                    delay = min(delay, stale_delay)
+                    logger.warning(
+                        "Guide data stale; watchdog recheck in %.0fs (scheduled run %s)",
+                        delay,
+                        next_run,
+                    )
+                else:
+                    logger.info("Next scheduled run at %s (in %.0fs)", next_run, delay)
             else:
                 # Fallback if cron calculation fails
                 delay = 3600  # 1 hour fallback
                 app.state.scheduler_next_run = None
-                logger.warning("Could not calculate next run time, using 1-hour fallback")
+                if freshness["is_stale"]:
+                    stale_delay = max(30.0, min(300.0, _stale_recovery_cooldown_remaining()))
+                    delay = min(delay, stale_delay)
+                    logger.warning(
+                        "Could not calculate next run time; guide stale, watchdog recheck in %.0fs",
+                        delay,
+                    )
+                else:
+                    logger.warning("Could not calculate next run time, using 1-hour fallback")
 
             # Wait for scheduled time
             await asyncio.sleep(delay)
@@ -1584,10 +1774,16 @@ async def scheduler_loop():
 async def on_startup():
     # Initialize credentials on startup
     creds = load_or_create_credentials()
+    app.state.last_stale_recovery_attempt = 0.0
     app.state.scheduler_task = asyncio.create_task(scheduler_loop())
     logger.info("Xtreme Codes API credentials ready")
     logger.info(f"Username: {creds.get('username')}")
     logger.info(f"Toonami Aftermath: Downlink running on http://localhost:{PORT}")
+    logger.info(
+        "Guide freshness watchdog enabled (stale_threshold=%ss, recovery_cooldown=%ss)",
+        STALE_UPDATE_THRESHOLD_SECONDS,
+        STALE_RECOVERY_COOLDOWN_SECONDS,
+    )
     logger.info("View full credentials and setup guide in WebUI")
 
     # Show first-time setup info if this is a new installation

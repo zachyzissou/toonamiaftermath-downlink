@@ -8,7 +8,7 @@ import shutil
 import sys
 import tempfile
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -247,6 +247,66 @@ def test_cron_next_respects_dom_mon_dow():
     print("✅ Cron scheduling respects day/month/day-of-week fields")
 
 
+def test_health_reports_stale_freshness():
+    """Health endpoint should surface stale artifact freshness details."""
+    from app import server
+
+    server.M3U_PATH.parent.mkdir(parents=True, exist_ok=True)
+    server.M3U_PATH.write_text("#EXTM3U\n")
+    server.XML_PATH.write_text("<tv></tv>\n")
+
+    stale_mtime = time.time() - (3 * 24 * 60 * 60)
+    os.utime(server.M3U_PATH, (stale_mtime, stale_mtime))
+    os.utime(server.XML_PATH, (stale_mtime, stale_mtime))
+    server.write_state(
+        {"last_update": datetime.fromtimestamp(stale_mtime, tz=UTC).isoformat()}
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+        assert response.status_code in {200, 503}
+        payload = response.json()
+        assert "freshness" in payload
+        assert payload["freshness"]["is_stale"] is True
+        assert payload["checks"]["artifact_freshness"] in {"warning", "error"}
+    print("✅ Health endpoint reports stale guide freshness")
+
+
+def test_watchdog_recovery_triggers_when_stale():
+    """Watchdog should trigger immediate recovery generation for stale data."""
+    import asyncio
+
+    from app import server
+
+    stale_time = datetime.now(UTC) - timedelta(days=3)
+    server.write_state({"last_update": stale_time.isoformat()})
+    server.app.state.last_stale_recovery_attempt = 0.0
+    server.app.state.generation_task = None
+
+    calls = {"count": 0}
+    original = server._run_generate_files_serialized
+    original_cooldown = server.STALE_RECOVERY_COOLDOWN_SECONDS
+    original_generation_in_progress = server._generation_in_progress
+
+    async def fake_generate():
+        calls["count"] += 1
+        server.write_state({"last_update": datetime.now(UTC).isoformat()})
+        return {"ok": True}
+
+    try:
+        server.STALE_RECOVERY_COOLDOWN_SECONDS = 0
+        server._generation_in_progress = lambda: False
+        server._run_generate_files_serialized = fake_generate
+        triggered = asyncio.run(server._run_stale_recovery_if_needed(datetime.now(UTC)))
+        assert triggered is True
+        assert calls["count"] == 1
+    finally:
+        server.STALE_RECOVERY_COOLDOWN_SECONDS = original_cooldown
+        server._run_generate_files_serialized = original
+        server._generation_in_progress = original_generation_in_progress
+    print("✅ Stale-data watchdog triggers recovery refresh")
+
+
 def cleanup():
     """Clean up test data directory."""
     data_dir = os.environ.get("DATA_DIR")
@@ -267,6 +327,8 @@ def main():
         test_generation_requires_fresh_artifacts()
         test_lan_refresh_host_detection()
         test_cron_next_respects_dom_mon_dow()
+        test_health_reports_stale_freshness()
+        test_watchdog_recovery_triggers_when_stale()
 
         print("\n🎉 All integration tests passed!")
         print("✅ API endpoints are working correctly")
