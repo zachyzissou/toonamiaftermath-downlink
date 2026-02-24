@@ -62,6 +62,7 @@ class CachedStaticFiles(StaticFiles):
 DEFAULT_CRON_SCHEDULE = "0 3 * * *"
 DEFAULT_PORT = 7004
 MAX_CHANNELS_TO_LOG = 100
+MTIME_TOLERANCE_SECONDS = 1.0
 
 # Configuration constants
 DATA_DIR = Path(os.environ.get("DATA_DIR", "/data")).resolve()
@@ -474,6 +475,16 @@ def _verify_generated_files(generated_after: float | None = None) -> bool:
     """
     Verify that M3U and XML files were generated successfully.
 
+    This checks that both artifacts:
+    - exist on disk
+    - are non-empty
+    - and, when ``generated_after`` is provided, were modified at or after
+      that UNIX timestamp (with a small filesystem timestamp tolerance)
+
+    Args:
+        generated_after: Optional UNIX timestamp in seconds used as a freshness
+            threshold for generated artifacts.
+
     Returns:
         bool: True if both files exist and are valid
     """
@@ -488,7 +499,7 @@ def _verify_generated_files(generated_after: float | None = None) -> bool:
         if threshold is None:
             return True
         # Small tolerance for filesystem timestamp precision.
-        if stat.st_mtime + 1 < threshold:
+        if stat.st_mtime + MTIME_TOLERANCE_SECONDS < threshold:
             logger.warning(
                 "Artifact %s appears stale (mtime=%s, expected >= %s)",
                 path,
