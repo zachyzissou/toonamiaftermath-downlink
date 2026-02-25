@@ -26,7 +26,7 @@ os.environ["WEB_DIR"] = str(Path(__file__).parent / "web")
 from app.server import app
 
 
-def test_api_endpoints():
+def test_api_endpoints():  # noqa: PLR0915
     """Test basic API endpoints."""
     print("🧪 Testing API endpoints...")
 
@@ -37,6 +37,7 @@ def test_api_endpoints():
         data = response.json()
         assert "channel_count" in data
         assert "cron" in data
+        assert "refresh_access_mode" in data
         print("✅ Status endpoint working")
 
         # Test channels endpoint
@@ -90,7 +91,16 @@ def test_api_endpoints():
         assert "status" in health_data
         assert "timestamp" in health_data
         assert "checks" in health_data
+        assert "data_dir_writable" in health_data["checks"]
         print("✅ Health endpoint working")
+
+        # Test HEAD health endpoint for probe compatibility
+        head_response = client.head("/health")
+        assert head_response.status_code in {
+            200,
+            503,
+        }, f"Health HEAD endpoint failed: {head_response.status_code}"
+        print("✅ Health HEAD endpoint working")
 
         # Test stream codes endpoint
         response = client.get("/stream-codes")
