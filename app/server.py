@@ -337,6 +337,15 @@ def _is_refresh_request_allowed(
     return False
 
 
+def _refresh_access_mode() -> str:
+    """Return configured refresh access mode for diagnostics/UI."""
+    if ALLOW_ANONYMOUS_LOCAL_REFRESH:
+        return "lan_anonymous"
+    if APP_REFRESH_TOKEN:
+        return "token_required"
+    return "disabled"
+
+
 def _is_refresh_rate_limited() -> tuple[bool, float]:
     """Return whether refresh is currently rate-limited and remaining delay."""
     now = time.monotonic()
@@ -1018,13 +1027,17 @@ async def health_check():
             else ("warning" if freshness["is_stale"] else "ok")
         )
 
+        data_dir_exists = DATA_DIR.exists()
+        data_dir_writable = data_dir_exists and os.access(DATA_DIR, os.W_OK)
+
         # Check basic functionality
         health_status = {
             "status": "healthy",
             "timestamp": datetime.now(UTC).isoformat(),
             "checks": {
                 "api": "ok",
-                "data_dir": "ok" if DATA_DIR.exists() else "error",
+                "data_dir": "ok" if data_dir_exists else "error",
+                "data_dir_writable": "ok" if data_dir_writable else "error",
                 "web_assets": "ok" if (WEB_DIR / "assets").exists() else "warning",
                 "cli_binary": "ok" if CLI_BIN.exists() else "error",
                 "memory": "ok",  # Could add actual memory check
@@ -1044,6 +1057,7 @@ async def health_check():
                 "context": state.get("last_failure_context"),
                 "consecutive_failures": consecutive_failures,
             },
+            "refresh_access_mode": _refresh_access_mode(),
         }
 
         # Check if any critical services are down
@@ -1051,7 +1065,14 @@ async def health_check():
             k
             for k, v in health_status["checks"].items()
             if v == "error"
-            and k in ["data_dir", "cli_binary", "artifact_freshness", "scheduler_failures"]
+            and k
+            in [
+                "data_dir",
+                "data_dir_writable",
+                "cli_binary",
+                "artifact_freshness",
+                "scheduler_failures",
+            ]
         ]
 
         if critical_failures:
@@ -1077,6 +1098,15 @@ async def health_check():
         )
 
 
+@app.head("/health")
+async def health_head():
+    """HEAD healthcheck compatibility for container probes."""
+    result = await health_check()
+    if isinstance(result, JSONResponse):
+        return Response(status_code=result.status_code)
+    return Response(status_code=200)
+
+
 @app.get("/status")
 async def status():
     """Get application status including last update, next run, and channel count."""
@@ -1100,6 +1130,7 @@ async def status():
         "last_failure_at": state.get("last_failure_at"),
         "last_failure_context": state.get("last_failure_context"),
         "consecutive_failures": state.get("consecutive_failures", 0),
+        "refresh_access_mode": _refresh_access_mode(),
         "stream_endpoints_available": True,
     }
 

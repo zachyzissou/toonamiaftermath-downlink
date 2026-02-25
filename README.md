@@ -138,6 +138,8 @@ npm run lint:js
 - **Health endpoint fails**: check container logs, `checks.scheduler_failures`, and `DATA_DIR` write permissions.
 - **Feed files stale**: inspect `/health` `freshness` fields, tune `STALE_UPDATE_THRESHOLD_SECONDS` if needed, and rerun update routines manually.
 - **Scheduler appears idle**: check `/status` for `cron_supported`, `cron_error`, and `last_error` / `consecutive_failures`.
+- **Refresh button says unauthorized**: set `ALLOW_ANONYMOUS_LOCAL_REFRESH=true` for LAN-only use, or configure `APP_REFRESH_TOKEN` and call `/refresh` with auth headers.
+- **`permission denied` writing `/data`**: fix host volume ownership/permissions so container user can write `/data` (`index.m3u`, `index.xml`, `state.json`, `credentials.json`).
 - **No WebUI credentials shown**: clear old `/data/credentials.json` only if intentionally rotating, then restart.
 - **`docker build` fails**: inspect Dockerfile stage for dependency or checksum mismatches.
 

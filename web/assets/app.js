@@ -197,6 +197,47 @@ async function fetchJSON(path) {
   }
 }
 
+async function fetchStatusSnapshot() {
+  try {
+    const r = await fetch('/status', { cache: 'no-store' });
+    if (!r.ok) {
+      return null;
+    }
+    return await r.json();
+  } catch {
+    return null;
+  }
+}
+
+async function waitForUpdatedLastUpdate(previousLastUpdate, timeoutMs = 45000, pollMs = 2500) {
+  const previousValue =
+    previousLastUpdate && String(previousLastUpdate).trim().length
+      ? String(previousLastUpdate)
+      : null;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt < timeoutMs) {
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+    const snapshot = await fetchStatusSnapshot();
+    if (!snapshot) {
+      continue;
+    }
+    const currentValue =
+      snapshot.last_update && String(snapshot.last_update).trim().length
+        ? String(snapshot.last_update)
+        : null;
+
+    if (!previousValue && currentValue) {
+      return true;
+    }
+    if (previousValue && currentValue && currentValue !== previousValue) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 // Remove old error handling code that was left behind
 // The new showNotification function handles all error display
 
@@ -269,6 +310,13 @@ async function loadStatus() {
     streamRow.appendChild(streamCode);
     meta.appendChild(streamRow);
 
+    const refreshRow = document.createElement('div');
+    refreshRow.appendChild(document.createTextNode('Refresh access: '));
+    const refreshCode = document.createElement('code');
+    refreshCode.textContent = String(data.refresh_access_mode ?? '—');
+    refreshRow.appendChild(refreshCode);
+    meta.appendChild(refreshRow);
+
     quickStats.replaceChildren(meta);
 
     announceToScreenReader(`Status updated. ${data.channel_count || 0} channels available.`);
@@ -334,6 +382,8 @@ async function loadChannels() {
 byId('refresh').addEventListener('click', async event => {
   const btn = event.currentTarget;
   const originalText = btn.textContent;
+  const beforeStatus = await fetchStatusSnapshot();
+  const previousLastUpdate = beforeStatus?.last_update ?? null;
 
   try {
     btn.innerHTML = '<span aria-hidden="true">↻</span> Refreshing...';
@@ -343,9 +393,20 @@ byId('refresh').addEventListener('click', async event => {
 
     const r = await fetch('/refresh', { method: 'POST' });
     if (r.ok) {
+      showNotification('Refresh started. Waiting for updated guide data...', 'info');
+      const updated = await waitForUpdatedLastUpdate(previousLastUpdate);
       await Promise.all([loadStatus(), loadChannels()]);
-      btn.innerHTML = '<span aria-hidden="true">✓</span> Refreshed!';
-      announceToScreenReader('Data refreshed successfully');
+      if (updated) {
+        btn.innerHTML = '<span aria-hidden="true">✓</span> Refreshed!';
+        announceToScreenReader('Data refreshed successfully');
+      } else {
+        btn.innerHTML = '<span aria-hidden="true">↻</span> Refresh queued';
+        showNotification(
+          'Refresh request accepted, but update is still processing in the background.',
+          'warning',
+        );
+        announceToScreenReader('Refresh queued and still processing');
+      }
       setTimeout(() => {
         btn.innerHTML = originalText;
         btn.disabled = false;
@@ -353,11 +414,24 @@ byId('refresh').addEventListener('click', async event => {
         setLoadingState(btn, false);
       }, 2000);
     } else {
-      throw new Error(`HTTP ${r.status}`);
+      let detail = `HTTP ${r.status}`;
+      try {
+        const payload = await r.json();
+        if (payload && typeof payload.detail === 'string' && payload.detail.trim().length > 0) {
+          detail = payload.detail;
+        }
+      } catch {
+        // Ignore non-JSON response details.
+      }
+
+      if (r.status === 401) {
+        detail = 'Unauthorized refresh. Enable LAN refresh or configure APP_REFRESH_TOKEN.';
+      }
+      throw new Error(detail);
     }
   } catch (e) {
     console.warn('Refresh failed', e);
-    showNotification('Refresh failed - please try again', 'error');
+    showNotification(`Refresh failed: ${e.message || 'please try again'}`, 'error');
     btn.innerHTML = originalText;
     btn.disabled = false;
     btn.removeAttribute('aria-busy');
