@@ -26,7 +26,7 @@ os.environ["WEB_DIR"] = str(Path(__file__).parent / "web")
 from app.server import app
 
 
-def test_api_endpoints():
+def test_api_endpoints():  # noqa: PLR0915
     """Test basic API endpoints."""
     print("🧪 Testing API endpoints...")
 
