@@ -370,6 +370,49 @@ def test_record_generation_failure_updates_state():
     print("✅ Failure metadata persistence works")
 
 
+def test_cli_attempt_mode_ordering_prefers_compatibility_and_cache():
+    """CLI attempt ordering should prioritize compatibility and last success."""
+    from app import server
+
+    modes_when_run_supported = server._ordered_cli_attempt_modes(None, True)
+    assert modes_when_run_supported[0] == server.CLI_MODE_RUN_FLAGS
+    assert modes_when_run_supported[1] == server.CLI_MODE_RUN_DEFAULTS
+
+    modes_when_run_not_supported = server._ordered_cli_attempt_modes(None, False)
+    assert modes_when_run_not_supported[0] == server.CLI_MODE_ROOT_FLAGS
+    assert modes_when_run_not_supported[1] == server.CLI_MODE_ROOT_DEFAULTS
+
+    cached_mode_order = server._ordered_cli_attempt_modes(server.CLI_MODE_ROOT_FLAGS, True)
+    assert cached_mode_order[0] == server.CLI_MODE_ROOT_FLAGS
+    print("✅ CLI attempt mode ordering is adaptive and cache-aware")
+
+
+def test_get_cli_version_prefers_subcommand_and_caches_mode():
+    """CLI version probe should prefer `version` and cache the successful mode."""
+    import asyncio
+
+    from app import server
+
+    original_run_cmd_capture = server._run_cmd_capture
+    original_version_mode = getattr(server.app.state, "cli_version_mode", None)
+
+    async def fake_run_cmd_capture(cmd, **_kwargs):
+        if cmd[-1] == "version":
+            return 0, "toonamiaftermath-cli v1.2.3\nbuild abc", ""
+        return 2, "", "unknown flag: --version"
+
+    try:
+        server._run_cmd_capture = fake_run_cmd_capture
+        server.app.state.cli_version_mode = None
+        version = asyncio.run(server.get_cli_version())
+        assert version == "toonamiaftermath-cli v1.2.3"
+        assert server.app.state.cli_version_mode == server.CLI_VERSION_MODE_SUBCOMMAND
+    finally:
+        server._run_cmd_capture = original_run_cmd_capture
+        server.app.state.cli_version_mode = original_version_mode
+    print("✅ CLI version probe prefers subcommand and caches working mode")
+
+
 def test_health_reports_scheduler_failure_state():
     """Health endpoint should degrade when scheduler failures accumulate."""
     from app import server
@@ -486,6 +529,8 @@ def main():
         test_status_reports_cron_and_failure_diagnostics()
         test_metrics_endpoint_prometheus_gauges()
         test_record_generation_failure_updates_state()
+        test_cli_attempt_mode_ordering_prefers_compatibility_and_cache()
+        test_get_cli_version_prefers_subcommand_and_caches_mode()
         test_health_reports_scheduler_failure_state()
         test_health_reports_stale_freshness()
         test_watchdog_recovery_triggers_when_stale()

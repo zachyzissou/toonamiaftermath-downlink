@@ -123,6 +123,23 @@ M3U_PATH = DATA_DIR / "index.m3u"
 XML_PATH = DATA_DIR / "index.xml"
 STATE_PATH = DATA_DIR / "state.json"
 
+# CLI invocation mode constants
+CLI_MODE_ROOT_FLAGS = "root_flags"
+CLI_MODE_RUN_FLAGS = "run_flags"
+CLI_MODE_ROOT_DEFAULTS = "root_defaults"
+CLI_MODE_RUN_DEFAULTS = "run_defaults"
+VALID_CLI_MODES = {
+    CLI_MODE_ROOT_FLAGS,
+    CLI_MODE_RUN_FLAGS,
+    CLI_MODE_ROOT_DEFAULTS,
+    CLI_MODE_RUN_DEFAULTS,
+}
+
+# CLI version probing mode constants
+CLI_VERSION_MODE_SUBCOMMAND = "subcommand"
+CLI_VERSION_MODE_FLAG = "flag"
+VALID_CLI_VERSION_MODES = {CLI_VERSION_MODE_SUBCOMMAND, CLI_VERSION_MODE_FLAG}
+
 
 class CredentialsRotateRequest(BaseModel):
     """Request body for rotating Xtreme credentials."""
@@ -598,6 +615,185 @@ def ensure_cli_exists() -> None:
     logger.info(f"CLI binary found and executable: {CLI_BIN}")
 
 
+async def _run_cmd_capture(
+    cmd: list[str], *, cwd: str | None = None, timeout: int = 30
+) -> tuple[int, str, str]:
+    """Run a command and return returncode/stdout/stderr text."""
+    proc = await asyncio.create_subprocess_exec(
+        *cmd,
+        cwd=cwd,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+
+    try:
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        proc.terminate()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+        raise RuntimeError(f"Command timed out after {timeout}s") from None
+
+    return (
+        proc.returncode,
+        stdout.decode(errors="ignore"),
+        stderr.decode(errors="ignore"),
+    )
+
+
+def _normalize_cli_mode(value: Any) -> str | None:
+    """Normalize a persisted/runtime CLI mode value."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in VALID_CLI_MODES else None
+
+
+def _normalize_cli_version_mode(value: Any) -> str | None:
+    """Normalize a persisted/runtime CLI version probe mode value."""
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    return normalized if normalized in VALID_CLI_VERSION_MODES else None
+
+
+def _normalize_optional_bool(value: Any) -> bool | None:
+    """Normalize mixed-type bool configuration values."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+    return None
+
+
+def _cli_attempt_catalog() -> dict[str, tuple[list[str], str | None]]:
+    """Return all supported command invocation patterns."""
+    return {
+        CLI_MODE_ROOT_FLAGS: (
+            [str(CLI_BIN), "-m", str(M3U_PATH), "-x", str(XML_PATH)],
+            None,
+        ),
+        CLI_MODE_RUN_FLAGS: (
+            [str(CLI_BIN), "run", "-m", str(M3U_PATH), "-x", str(XML_PATH)],
+            None,
+        ),
+        CLI_MODE_ROOT_DEFAULTS: ([str(CLI_BIN)], str(DATA_DIR)),
+        CLI_MODE_RUN_DEFAULTS: ([str(CLI_BIN), "run"], str(DATA_DIR)),
+    }
+
+
+def _ordered_cli_attempt_modes(
+    preferred_mode: str | None,
+    supports_run_subcommand: bool | None,
+) -> list[str]:
+    """Return invocation modes ordered by compatibility confidence."""
+    if supports_run_subcommand is True:
+        modes = [
+            CLI_MODE_RUN_FLAGS,
+            CLI_MODE_RUN_DEFAULTS,
+            CLI_MODE_ROOT_FLAGS,
+            CLI_MODE_ROOT_DEFAULTS,
+        ]
+    elif supports_run_subcommand is False:
+        modes = [
+            CLI_MODE_ROOT_FLAGS,
+            CLI_MODE_ROOT_DEFAULTS,
+            CLI_MODE_RUN_FLAGS,
+            CLI_MODE_RUN_DEFAULTS,
+        ]
+    else:
+        modes = [
+            CLI_MODE_ROOT_FLAGS,
+            CLI_MODE_RUN_FLAGS,
+            CLI_MODE_ROOT_DEFAULTS,
+            CLI_MODE_RUN_DEFAULTS,
+        ]
+
+    normalized_preferred = _normalize_cli_mode(preferred_mode)
+    if normalized_preferred and normalized_preferred in modes:
+        modes.remove(normalized_preferred)
+        modes.insert(0, normalized_preferred)
+    return modes
+
+
+def _ordered_cli_version_probe_modes(preferred_mode: str | None) -> list[str]:
+    """Return version probe modes, preferring the last known working mode."""
+    modes = [CLI_VERSION_MODE_SUBCOMMAND, CLI_VERSION_MODE_FLAG]
+    normalized_preferred = _normalize_cli_version_mode(preferred_mode)
+    if normalized_preferred and normalized_preferred in modes:
+        modes.remove(normalized_preferred)
+        modes.insert(0, normalized_preferred)
+    return modes
+
+
+def _get_cached_cli_attempt_mode(state: dict[str, Any]) -> str | None:
+    """Read cached CLI invocation mode from runtime or persisted state."""
+    runtime_mode = _normalize_cli_mode(getattr(app.state, "cli_last_success_mode", None))
+    if runtime_mode:
+        return runtime_mode
+    persisted_mode = _normalize_cli_mode(state.get("cli_last_success_mode"))
+    if persisted_mode:
+        app.state.cli_last_success_mode = persisted_mode
+    return persisted_mode
+
+
+def _get_cached_cli_version_mode(state: dict[str, Any]) -> str | None:
+    """Read cached CLI version probe mode from runtime or persisted state."""
+    runtime_mode = _normalize_cli_version_mode(getattr(app.state, "cli_version_mode", None))
+    if runtime_mode:
+        return runtime_mode
+    persisted_mode = _normalize_cli_version_mode(state.get("cli_version_mode"))
+    if persisted_mode:
+        app.state.cli_version_mode = persisted_mode
+    return persisted_mode
+
+
+async def _detect_cli_supports_run_subcommand(state: dict[str, Any]) -> bool | None:
+    """Detect whether the CLI expects the `run` subcommand."""
+    runtime_value = _normalize_optional_bool(
+        getattr(app.state, "cli_supports_run_subcommand", None)
+    )
+    if runtime_value is not None:
+        return runtime_value
+
+    persisted_value = _normalize_optional_bool(state.get("cli_supports_run_subcommand"))
+    if persisted_value is not None:
+        app.state.cli_supports_run_subcommand = persisted_value
+        return persisted_value
+
+    try:
+        return_code, stdout, stderr = await _run_cmd_capture(
+            [str(CLI_BIN), "run", "--help"],
+            timeout=8,
+        )
+    except Exception as exc:
+        logger.debug("CLI run-subcommand probe failed: %s", exc)
+        return None
+
+    combined_output = f"{stdout}\n{stderr}".lower()
+    if return_code == 0:
+        app.state.cli_supports_run_subcommand = True
+        return True
+
+    if (
+        'unknown command "run"' in combined_output
+        or "unknown command: run" in combined_output
+        or "is not a command" in combined_output
+    ):
+        app.state.cli_supports_run_subcommand = False
+        return False
+
+    logger.debug("CLI run-subcommand probe was inconclusive (rc=%s)", return_code)
+    return None
+
+
 async def generate_files() -> dict[str, Any]:
     """
     Generate M3U and XMLTV files using the toonamiaftermath-cli.
@@ -619,19 +815,21 @@ async def generate_files() -> dict[str, Any]:
         WEB_DIR,
         os.environ.get("CRON_SCHEDULE", CRON_SCHEDULE),
     )
-
-    # Try multiple invocation strategies to support different CLI versions
-    attempts: list[tuple[list[str], str | None]] = [
-        ([str(CLI_BIN), "-m", str(M3U_PATH), "-x", str(XML_PATH)], None),
-        ([str(CLI_BIN), "run", "-m", str(M3U_PATH), "-x", str(XML_PATH)], None),
-        ([str(CLI_BIN)], str(DATA_DIR)),  # defaults to index.* in cwd
-        # some versions require subcommand
-        ([str(CLI_BIN), "run"], str(DATA_DIR)),
-    ]
+    state = read_state()
+    preferred_mode = _get_cached_cli_attempt_mode(state)
+    supports_run_subcommand = await _detect_cli_supports_run_subcommand(state)
+    attempt_catalog = _cli_attempt_catalog()
+    attempt_modes = _ordered_cli_attempt_modes(preferred_mode, supports_run_subcommand)
+    logger.info(
+        "CLI invocation order resolved: %s",
+        ", ".join(attempt_modes),
+    )
 
     success = False
-    for attempt_num, (cmd, cwd) in enumerate(attempts, 1):
-        logger.info(f"Attempt {attempt_num}/{len(attempts)}: {' '.join(cmd)}")
+    successful_mode: str | None = None
+    for attempt_num, mode in enumerate(attempt_modes, 1):
+        cmd, cwd = attempt_catalog[mode]
+        logger.info(f"Attempt {attempt_num}/{len(attempt_modes)}: {' '.join(cmd)}")
         attempt_started_at = time.time()
 
         try:
@@ -646,7 +844,7 @@ async def generate_files() -> dict[str, Any]:
                 run_cli,
                 max_retries=2,  # Fewer retries per command variant
                 delay=0.5,
-                operation_name=f"CLI execution: {cmd[0]}",
+                operation_name=f"CLI execution ({mode}): {cmd[0]}",
             )
 
         except Exception as e:
@@ -662,6 +860,8 @@ async def generate_files() -> dict[str, Any]:
         # Check if files were generated successfully
         success = _verify_generated_files(generated_after=attempt_started_at)
         if success:
+            successful_mode = mode
+            app.state.cli_last_success_mode = mode
             break
         logger.warning(
             "Artifact validation failed after successful CLI exit; "
@@ -671,8 +871,14 @@ async def generate_files() -> dict[str, Any]:
     if not success:
         raise RuntimeError("Failed to generate M3U/XML files after multiple attempts")
 
+    inferred_supports_run = supports_run_subcommand
+    if inferred_supports_run is None and successful_mode:
+        inferred_supports_run = successful_mode in {
+            CLI_MODE_RUN_FLAGS,
+            CLI_MODE_RUN_DEFAULTS,
+        }
+
     # Update state
-    state = read_state()
     state.update(
         {
             "last_update": datetime.now(UTC).isoformat(),
@@ -681,6 +887,12 @@ async def generate_files() -> dict[str, Any]:
             "last_failure_at": None,
             "last_failure_context": None,
             "consecutive_failures": 0,
+            "cli_last_success_mode": successful_mode or preferred_mode,
+            "cli_supports_run_subcommand": inferred_supports_run,
+            "cli_version_mode": _normalize_cli_version_mode(
+                getattr(app.state, "cli_version_mode", None)
+            )
+            or _get_cached_cli_version_mode(state),
         }
     )
     write_state(state)
@@ -774,24 +986,42 @@ async def get_cli_version() -> str | None:
     Returns:
         Optional[str]: Version string if available, None otherwise
     """
-    try:
-        cmd = [str(CLI_BIN), "--version"]
-        proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        out, err = await proc.communicate()
+    state = read_state()
+    preferred_mode = _get_cached_cli_version_mode(state)
+    probe_modes = _ordered_cli_version_probe_modes(preferred_mode)
+    probe_commands: dict[str, list[str]] = {
+        CLI_VERSION_MODE_SUBCOMMAND: [str(CLI_BIN), "version"],
+        CLI_VERSION_MODE_FLAG: [str(CLI_BIN), "--version"],
+    }
 
-        if proc.returncode == 0:
-            version = out.decode().strip()
-            return version if version else None
-        logger.warning(f"CLI version check failed with code {proc.returncode}: {err.decode()}")
-        return None
+    last_failure_detail: str | None = None
 
-    except Exception as e:
-        logger.warning(f"Failed to get CLI version: {e}")
-        return None
+    for mode in probe_modes:
+        cmd = probe_commands[mode]
+        try:
+            return_code, stdout, stderr = await _run_cmd_capture(cmd, timeout=10)
+        except Exception as exc:
+            last_failure_detail = f"{' '.join(cmd)} raised: {exc}"
+            continue
+
+        if return_code == 0:
+            output = (stdout or stderr).strip()
+            if output:
+                app.state.cli_version_mode = mode
+                first_line = output.splitlines()[0].strip()
+                return first_line if first_line else output
+            app.state.cli_version_mode = mode
+            return None
+
+        error_preview = (stderr or stdout).strip().splitlines()
+        if error_preview:
+            last_failure_detail = f"{' '.join(cmd)} -> {error_preview[0][:180]}"
+        else:
+            last_failure_detail = f"{' '.join(cmd)} -> exit code {return_code}"
+
+    if last_failure_detail:
+        logger.warning("CLI version check failed: %s", last_failure_detail)
+    return None
 
 
 def _parse_extinf(line: str) -> tuple[str | None, str | None, str | None]:
