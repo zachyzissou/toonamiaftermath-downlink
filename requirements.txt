@@ -5,7 +5,7 @@ uvicorn[standard]==0.30.6
 # Development and testing dependencies
 httpx==0.28.1
 ruff==0.6.9
-black==24.10.0
+black==26.3.1
 
 # Performance middleware
 python-multipart==0.0.22
