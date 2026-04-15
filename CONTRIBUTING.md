@@ -291,7 +291,7 @@ We follow [Semantic Versioning](https://semver.org/):
 
 ## 📄 License
 
-By contributing, you agree that your contributions will be licensed under the same license as the project (MIT License).
+By contributing, you agree that your contributions will be licensed under the same license as the project (Source-Visible License in `LICENSE`).
 
 ---
 

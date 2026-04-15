@@ -1,16 +1,20 @@
-# SlurpNet Source-Visible License v1.0
+# toonamiaftermath-downlink Source-Visible License v1.0
 
 Copyright (c) 2026 Zach Gonser and contributors authorized by Zach Gonser.
 All rights reserved.
 
 ## Grant of access
-You may view and read this source code solely for personal reference.
+You may view and read this source code solely for personal reference and evaluation. This
+limited grant includes only the temporary, incidental, and local copying strictly necessary to
+access, download, cache, clone, or display the source code for that purpose.
 
 ## No permission granted
-Except for the limited right to view the source code, no other rights are granted.
+Except for the limited right to view and evaluate the source code, including the incidental
+copies expressly permitted above, no other rights are granted.
 Without prior written permission from Zach Gonser, you may not:
 - use this code or any substantial portion of it in production or non-production systems,
-- copy, reproduce, modify, adapt, translate, or create derivative works,
+- copy, reproduce, modify, adapt, translate, or create derivative works, except for the
+  temporary, incidental, and local copies expressly permitted above,
 - distribute, sublicense, sell, lease, lend, publish, or transfer the code,
 - deploy the code, or any modified version of it, for personal, internal, commercial, or public use,
 - use the code to provide hosted or managed services,
