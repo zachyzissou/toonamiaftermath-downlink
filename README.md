@@ -1,3 +1,6 @@
+> **License Notice**
+> This repository is source-visible only. No copying, modification, redistribution, deployment, or commercial use is permitted without prior written permission from Zach Gonser. See `LICENSE` for details.
+
 # toonamiaftermath-downlink
 
 > Lightweight IPTV feed generation service that builds M3U/XMLTV outputs and serves a Toonami-themed web control panel.

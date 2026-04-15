@@ -1,21 +1,32 @@
-MIT License
+# SlurpNet Source-Visible License v1.0
 
-Copyright (c) 2025 Toonami Aftermath: Downlink Contributors
+Copyright (c) 2026 Zach Gonser and contributors authorized by Zach Gonser.
+All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+## Grant of access
+You may view and read this source code solely for personal reference.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## No permission granted
+Except for the limited right to view the source code, no other rights are granted.
+Without prior written permission from Zach Gonser, you may not:
+- use this code or any substantial portion of it in production or non-production systems,
+- copy, reproduce, modify, adapt, translate, or create derivative works,
+- distribute, sublicense, sell, lease, lend, publish, or transfer the code,
+- deploy the code, or any modified version of it, for personal, internal, commercial, or public use,
+- use the code to provide hosted or managed services,
+- remove or alter copyright, attribution, or license notices.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+## Contributions
+Unless explicitly agreed otherwise in writing, any contribution, patch, pull request, or suggestion submitted for this repository may be rejected and does not grant you any rights to this codebase.
+
+## Trademark and branding
+No trademark, service mark, trade name, logo, or brand feature license is granted.
+
+## Reservation of rights
+All rights not expressly granted are reserved.
+
+## Contact
+For licensing, commercial use, partnership, or exception requests, contact Zach Gonser for written permission.
+
+## Disclaimer
+This code is provided "as is", without warranty of any kind, express or implied, to the maximum extent permitted by law.
