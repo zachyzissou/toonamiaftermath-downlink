@@ -794,6 +794,125 @@ async def _detect_cli_supports_run_subcommand(state: dict[str, Any]) -> bool | N
     return None
 
 
+# Channels that the upstream Toonami Aftermath API does not publish a schedule
+# for (MTV97, the Movies marathon, Radio, etc.) still need *some* EPG so that
+# Plex / Channels DVR / Jellyfin show a useful label in the guide. Keys are
+# matched case-insensitively against the channel's display name in the M3U.
+SYNTHETIC_PROGRAMMES: dict[str, dict[str, str]] = {
+    "mtv97": {
+        "title": "MTV97 — Late-90s MTV Block",
+        "description": (
+            "A continuous late-1990s MTV-style block: music videos, MTV "
+            "original programming, and pop culture from the era."
+        ),
+    },
+    "movies": {
+        "title": "Toonami Aftermath Movies",
+        "description": (
+            "A continuous movie marathon featuring films from the Toonami "
+            "Aftermath archive."
+        ),
+    },
+    "toonami aftermath radio": {
+        "title": "Toonami Aftermath Radio",
+        "description": ("Audio-only stream featuring classic broadcast radio content."),
+    },
+}
+
+SYNTHETIC_EPG_DAYS_AHEAD = 7
+
+
+def _format_xmltv_time(dt: datetime) -> str:
+    """Format a UTC datetime as XMLTV's `YYYYMMDDHHMMSS +0000`."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return dt.strftime("%Y%m%d%H%M%S %z")
+
+
+def _synthesize_missing_epg() -> int:
+    """For channels declared in the generated `index.xml` that have zero
+    `<programme>` entries, append a per-day 'always-on' programme spanning
+    the next ``SYNTHETIC_EPG_DAYS_AHEAD`` days so downstream EPG consumers
+    display *something* in the guide.
+
+    Title and description are taken from ``SYNTHETIC_PROGRAMMES`` keyed by
+    the channel's lowercased display name; otherwise a generic template is
+    used. Override the day count with the ``SYNTHETIC_EPG_DAYS`` env var.
+
+    Returns the number of channels that received synthetic programmes.
+    """
+    # defusedxml handles the parse (hardens against billion-laughs / XXE
+    # attacks); the stdlib ET is only used for element construction below,
+    # which doesn't take untrusted input.
+    import xml.etree.ElementTree as ET  # noqa: PLC0415, S405  # nosec B405
+
+    from defusedxml.ElementTree import (  # noqa: PLC0415
+        ParseError as DefusedParseError,
+    )
+    from defusedxml.ElementTree import (
+        parse as defused_parse,
+    )
+
+    if not XML_PATH.exists():
+        return 0
+
+    try:
+        tree = defused_parse(str(XML_PATH))
+        root = tree.getroot()
+    except DefusedParseError as exc:
+        logger.warning("Could not parse %s for synthetic EPG: %s", XML_PATH, exc)
+        return 0
+
+    channel_ids = [ch.get("id") for ch in root.findall("channel") if ch.get("id")]
+    programmed_ids = {p.get("channel") for p in root.findall("programme")}
+    missing_ids = [cid for cid in channel_ids if cid not in programmed_ids]
+    if not missing_ids:
+        return 0
+
+    id_to_name = {
+        ch.get("id"): (ch.findtext("display-name") or ch.get("id") or "")
+        for ch in root.findall("channel")
+    }
+
+    try:
+        days_ahead = max(
+            1, int(os.environ.get("SYNTHETIC_EPG_DAYS", SYNTHETIC_EPG_DAYS_AHEAD))
+        )
+    except ValueError:
+        days_ahead = SYNTHETIC_EPG_DAYS_AHEAD
+
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    for cid in missing_ids:
+        name = id_to_name.get(cid, cid) or ""
+        synth = SYNTHETIC_PROGRAMMES.get(name.lower()) or {
+            "title": f"{name} — Live Stream",
+            "description": f"Continuous live stream on {name}.",
+        }
+        for day in range(days_ahead):
+            start = now + timedelta(days=day)
+            stop = start + timedelta(days=1)
+            programme = ET.SubElement(
+                root,
+                "programme",
+                {
+                    "start": _format_xmltv_time(start),
+                    "stop": _format_xmltv_time(stop),
+                    "channel": cid,
+                },
+            )
+            ET.SubElement(programme, "title", {"lang": "en"}).text = synth["title"]
+            ET.SubElement(programme, "desc", {"lang": "en"}).text = synth["description"]
+        logger.info(
+            "Synthesized %d daily EPG entries for channel id=%s (%s)",
+            days_ahead,
+            cid,
+            name,
+        )
+
+    tree.write(XML_PATH, encoding="utf-8", xml_declaration=True)
+    return len(missing_ids)
+
+
 async def generate_files() -> dict[str, Any]:
     """
     Generate M3U and XMLTV files using the toonamiaftermath-cli.
@@ -870,6 +989,15 @@ async def generate_files() -> dict[str, Any]:
 
     if not success:
         raise RuntimeError("Failed to generate M3U/XML files after multiple attempts")
+
+    # Some channels (MTV97, Movies, Radio) have no upstream schedule data;
+    # add stub EPG entries so guide consumers don't show them as empty.
+    try:
+        synthesized = _synthesize_missing_epg()
+        if synthesized:
+            logger.info("Augmented XMLTV with synthetic EPG for %d channel(s)", synthesized)
+    except Exception as exc:  # noqa: BLE001  # best-effort enrichment
+        logger.warning("Synthetic EPG enrichment failed: %s", exc)
 
     inferred_supports_run = supports_run_subcommand
     if inferred_supports_run is None and successful_mode:
