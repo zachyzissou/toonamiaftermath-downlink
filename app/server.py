@@ -841,15 +841,25 @@ def _synthesize_missing_epg() -> int:
 
     Returns the number of channels that received synthetic programmes.
     """
-    import xml.etree.ElementTree as ET  # noqa: PLC0415
+    # defusedxml handles the parse (hardens against billion-laughs / XXE
+    # attacks); the stdlib ET is only used for element construction below,
+    # which doesn't take untrusted input.
+    import xml.etree.ElementTree as ET  # noqa: PLC0415, S405  # nosec B405
+
+    from defusedxml.ElementTree import (  # noqa: PLC0415
+        ParseError as DefusedParseError,
+    )
+    from defusedxml.ElementTree import (
+        parse as defused_parse,
+    )
 
     if not XML_PATH.exists():
         return 0
 
     try:
-        tree = ET.parse(XML_PATH)
+        tree = defused_parse(str(XML_PATH))
         root = tree.getroot()
-    except ET.ParseError as exc:
+    except DefusedParseError as exc:
         logger.warning("Could not parse %s for synthetic EPG: %s", XML_PATH, exc)
         return 0
 

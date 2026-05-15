@@ -1,6 +1,7 @@
 # Production dependencies
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
+defusedxml==0.7.1  # hardened XML parsing for synthetic EPG augmentation
 
 # Development and testing dependencies
 httpx==0.28.1
