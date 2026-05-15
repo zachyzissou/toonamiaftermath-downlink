@@ -22,12 +22,18 @@
     "test:all": "npm run test:unit && npm run test:integration && npm run test:frontend",
     "dev": "python run_dev.py"
   },
-  "keywords": ["iptv", "toonami", "m3u", "xmltv", "docker"],
+  "keywords": [
+    "iptv",
+    "toonami",
+    "m3u",
+    "xmltv",
+    "docker"
+  ],
   "author": "",
   "license": "MIT",
   "devDependencies": {
     "eslint": "^9.33.0",
-    "markdownlint-cli": "^0.47.0",
+    "markdownlint-cli": "^0.48.0",
     "prettier": "^3.6.2"
   }
 }
