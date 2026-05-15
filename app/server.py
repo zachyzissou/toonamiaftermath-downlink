@@ -1039,7 +1039,11 @@ def _parse_extinf(line: str) -> tuple[str | None, str | None, str | None]:
             j = attrs.find('"', i + len(kq))
             return attrs[i + len(kq) : j] if j != -1 else None
 
-        chan_id = get_attr("tvg-id") or get_attr("channel-id") or "ta"
+        # Prefer the numeric `channel-id` over `tvg-id` so the Xtreme Codes
+        # stream_id is a clean integer (e.g. "1") rather than a name with
+        # spaces ("Toonami Aftermath East"). The XMLTV the CLI emits already
+        # uses numeric channel ids, so this also keeps EPG matching aligned.
+        chan_id = get_attr("channel-id") or get_attr("tvg-id") or "ta"
         number = get_attr("tvg-chno") or get_attr("channel-number")
         return chan_id, number, name
     except Exception as e:
@@ -1653,10 +1657,20 @@ async def xtreme_stream(
             )
             return PlainTextResponse(MSG_INVALID_CREDENTIALS, status_code=401)
 
-    # Find the actual stream URL
+    # Find the actual stream URL. We accept three forms of stream_id:
+    #   1. The current numeric `id` (from channel-id, e.g. "1")
+    #   2. The dotted-to-underscored variant (legacy client compat)
+    #   3. The channel `name` (back-compat: prior versions emitted Xtreme
+    #      Codes URLs using the name when channel-id was missing or when
+    #      `_parse_extinf` preferred tvg-id over channel-id).
     channels = parse_channels_from_m3u()
     for ch in channels:
-        if ch.get("id") == stream_id or str(ch.get("id", "")).replace(".", "_") == stream_id:
+        cid = ch.get("id")
+        if (
+            cid == stream_id
+            or str(cid or "").replace(".", "_") == stream_id
+            or ch.get("name") == stream_id
+        ):
             stream_url = ch.get("url", "")
             if stream_url:
                 logger.info(f"Stream redirect for {stream_id} to user {username}")
