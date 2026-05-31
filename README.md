@@ -13,6 +13,14 @@
 Python handles channel ingestion and processing logic, while Node tooling supports linting and frontend asset checks.
 The app can run locally or as a lightweight container with persistent data storage and scheduled updates.
 
+## Current Truth
+
+- Canonical roadmap: [`ROADMAP.md`](ROADMAP.md)
+- Canonical GitHub Project: [#42 toonamiaftermath-downlink](https://github.com/users/zachyzissou/projects/42)
+- Current active gate: UX trust-floor remediation from issue `#40`.
+- Open maintenance PRs at last refresh: `#42`, `#43`, `#44`.
+- Planning rule: keep credential-bearing UI, refresh behavior, dependency updates, and license posture visible in Project #42 before merging.
+
 ## Problem / value
 
 - **Problem:** Manual channel feed generation and schedule tracking is error-prone and difficult to observe.
@@ -153,9 +161,9 @@ npm run lint:js
 
 ## Roadmap
 
-- Add stricter API response contract checks for `/player_api.php` and `/get.php`.
-- Expand monitoring dashboards and webhook alerts for missed update windows.
-- Improve automated smoke coverage for container restart behaviors.
+- See [`ROADMAP.md`](ROADMAP.md) for the current Project-backed remediation plan.
+- Current P0 lane: CSP, refresh-lock UX, and first-run empty-state guidance from issue `#40`.
+- Current maintenance lane: dependency PRs `#42`/`#43` and license PR `#44`.
 
 ## Known risks
 
