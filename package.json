@@ -30,7 +30,7 @@
     "docker"
   ],
   "author": "",
-  "license": "MIT",
+  "license": "SEE LICENSE IN LICENSE",
   "devDependencies": {
     "eslint": "^9.33.0",
     "markdownlint-cli": "^0.48.0",

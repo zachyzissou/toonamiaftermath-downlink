@@ -1,3 +1,6 @@
+> **License Notice**
+> This repository is source-visible only. You may view the source and make local copies only as needed for review/evaluation, as permitted by the `LICENSE`. Modification, redistribution, deployment, or commercial use is not permitted without prior written permission from Zach Gonser. See `LICENSE` for details.
+
 # toonamiaftermath-downlink
 
 > Lightweight IPTV feed generation service that builds M3U/XMLTV outputs and serves a Toonami-themed web control panel.
@@ -178,6 +181,6 @@ npm run lint:js
 
 ## License & contact
 
-- License: MIT (`LICENSE`)
+- License: Source-visible only (`LICENSE`)
 - Maintainer: `@zachyzissou`
 - Security: see [SECURITY.md](./SECURITY.md)
