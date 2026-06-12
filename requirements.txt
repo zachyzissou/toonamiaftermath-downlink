@@ -1,11 +1,12 @@
 # Production dependencies
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
+defusedxml==0.7.1  # hardened XML parsing for synthetic EPG augmentation
 
 # Development and testing dependencies
 httpx==0.28.1
 ruff==0.6.9
-black==24.10.0
+black==26.3.1  # was 24.10.0; CVE-2026-32274 (path traversal in cache filename)
 
 # Performance middleware
-python-multipart==0.0.22
+python-multipart==0.0.29
